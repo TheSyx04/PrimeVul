@@ -735,11 +735,12 @@ def main():
 
     args = parser.parse_args()
 
-    # Initialize wandb for all modes
-    wandb.login(key="fb5a5b79b5aafdb17cb882dd76ac2e0cde9adf8d")
-    wandb.init(project=args.project, name=args.model_dir, config=vars(args))
+    accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps)
 
-    accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps) 
+    # Initialize wandb for all modes (only on main process)
+    if accelerator.is_main_process:
+        wandb.login(key="fb5a5b79b5aafdb17cb882dd76ac2e0cde9adf8d")
+        wandb.init(project=args.project, name=args.model_dir, config=vars(args)) 
     device = accelerator.device
     args.n_gpu = accelerator.num_processes
     args.device = device
@@ -833,7 +834,8 @@ def main():
         model.to(args.device)
         test_prob(args, model, tokenizer)
     
-    wandb.finish()
+    if accelerator.is_main_process:
+        wandb.finish()
     return results
 
 
