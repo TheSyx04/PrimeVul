@@ -15,6 +15,9 @@ import torch
 from torch.utils.data import DataLoader, Dataset, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 import json
+import wandb
+import time
+import re
 
 
 from tqdm import tqdm, trange
@@ -55,9 +58,20 @@ class InputFeatures(object):
         self.idx=str(idx)
         self.label=label
 
+def clean_code_change(text):
+    # Remove surrogate pairs and non-UTF-8 characters
+    if not isinstance(text, str):
+        return ""
+    # Remove surrogates
+    cleaned = re.sub(r'[\ud800-\udfff]', '', text)
+    # Optionally, remove non-printable/control characters
+    cleaned = ''.join(c for c in cleaned if c.isprintable())
+    return cleaned
+
         
 def convert_examples_to_features(js,tokenizer,args):
-    code = js['func']
+    code = js.get('func', js.get('code_change', ''))
+    code = clean_code_change(code)
     if args.model_type in ["codegen"]:
         code_tokens = tokenizer.tokenize(code)
         if '</s>' in code_tokens:
@@ -71,12 +85,14 @@ def convert_examples_to_features(js,tokenizer,args):
         code_tokens = code_tokens[:args.block_size-2]
         source_tokens =[tokenizer.cls_token]+code_tokens+[tokenizer.sep_token]
     if args.model_type in ["codegen"]:
-        source_ids = tokenizer.encode(js['func'].split("</s>")[0], max_length=args.block_size, padding='max_length', truncation=True)
+        source_ids = tokenizer.encode(code.split("</s>")[0], max_length=args.block_size, padding='max_length', truncation=True)
     else:
         source_ids =  tokenizer.convert_tokens_to_ids(source_tokens)
         padding_length = args.block_size - len(source_ids)
         source_ids+=[tokenizer.pad_token_id]*padding_length
-    return InputFeatures(source_tokens,source_ids,js['idx'],js['target'])
+    idx = js.get('idx', js.get('commit_id', '0'))
+    label = js.get('target', js.get('label', 0))
+    return InputFeatures(source_tokens,source_ids,idx,label)
 
 class TextDataset(Dataset):
     def __init__(self, tokenizer, args, file_path=None):
@@ -141,6 +157,7 @@ def train(args, accelerator, train_dataset, eval_dataset, model, tokenizer):
         train_dataloader, eval_dataloader, model, optimizer, scheduler
     )
     model.zero_grad()
+    train_start_time = time.time()
  
     step = 0
     for idx in range(args.start_epoch, int(args.num_train_epochs)): 
@@ -191,12 +208,45 @@ def train(args, accelerator, train_dataset, eval_dataset, model, tokenizer):
             # log after every logging_steps (e.g., 1000)
             ###
             if (step + 1) % args.logging_steps == 0:
+                # Track GPU RAM usage
+                gpu_mem = None
+                if torch.cuda.is_available():
+                    gpu_mem = torch.cuda.max_memory_allocated() / (1024 ** 2)  # MB
                 avg_loss=round(train_loss/tr_num,5)
-                # train_acc, train_prec, train_recall, train_f1, train_tnr, train_fpr, train_fnr = calculate_metrics(step_labels_lst, step_preds_lst)
+                step_logits_lst=np.concatenate(logits_lst,0)
+                step_labels_lst=np.concatenate(labels_lst,0)
+                if args.model_type in set(['codegen']):
+                    step_preds_lst=step_logits_lst[:,1]>0.5
+                else:
+                    step_preds_lst=step_logits_lst[:,0]>0.5
+                train_acc, train_prec, train_recall, train_f1, train_tnr, train_fpr, train_fnr = calculate_metrics(step_labels_lst, step_preds_lst)
                 if args.evaluate_during_training:  # Only evaluate when single GPU otherwise metrics may not average well
                     results = evaluate(args, accelerator, eval_dataloader, eval_dataset, model, tokenizer,eval_when_training=True)
                     for key, value in results.items():
                         logger.info("  %s = %s", key, round(value,4))                    
+                valid_loss, valid_acc, valid_prec, valid_recall, valid_f1, valid_tnr, valid_fpr, valid_fnr = results.values()
+                if accelerator.is_main_process:
+                    wandb.log({
+                        'train/loss': avg_loss,
+                        'valid/loss': valid_loss,
+                        'train/acc': train_acc,
+                        'valid/acc': valid_acc,
+                        'train/f1': train_f1,
+                        'valid/f1': valid_f1,
+                        'train/prec': train_prec,
+                        'valid/prec': valid_prec,
+                        'train/recall': train_recall,
+                        'valid/recall': valid_recall,
+                        'train/tnr': train_tnr,
+                        'valid/tnr': valid_tnr,
+                        'train/fpr': train_fpr,
+                        'valid/fpr': valid_fpr,
+                        'train/fnr': train_fnr,
+                        'valid/fnr': valid_fnr,
+                        'step': step,
+                        'gpu_ram_mb': gpu_mem,
+                        'elapsed_time_s': time.time() - train_start_time
+                    })                    
                 
                 # Save model checkpoint    
                 if results['eval_f1']>best_f1:
@@ -221,13 +271,43 @@ def train(args, accelerator, train_dataset, eval_dataset, model, tokenizer):
         avg_loss=round(train_loss/tr_num,5)
         logits_lst=np.concatenate(logits_lst,0)
         labels_lst=np.concatenate(labels_lst,0)
-        # train_acc, train_prec, train_recall, train_f1, train_tnr, train_fpr, train_fnr = calculate_metrics(labels_lst, preds_lst)
+        if args.model_type in set(['codegen']):
+            preds_lst=logits_lst[:,1]>0.5
+        else:
+            preds_lst=logits_lst[:,0]>0.5
+        train_acc, train_prec, train_recall, train_f1, train_tnr, train_fpr, train_fnr = calculate_metrics(labels_lst, preds_lst)
         
         if args.local_rank in [-1, 0]:
+            gpu_mem = None
+            if torch.cuda.is_available():
+                gpu_mem = torch.cuda.max_memory_allocated() / (1024 ** 2)
             if args.evaluate_during_training:  # Only evaluate when single GPU otherwise metrics may not average well
                 results = evaluate(args, accelerator, eval_dataloader, eval_dataset, model, tokenizer,eval_when_training=True)
                 for key, value in results.items():
                     logger.info("  %s = %s", key, round(value,4))                    
+            valid_loss, valid_acc, valid_prec, valid_recall, valid_f1, valid_tnr, valid_fpr, valid_fnr = results.values()
+            if accelerator.is_main_process:
+                wandb.log({
+                    'train/loss': avg_loss,
+                    'valid/loss': valid_loss,
+                    'train/acc': train_acc,
+                    'valid/acc': valid_acc,
+                    'train/f1': train_f1,
+                    'valid/f1': valid_f1,
+                    'train/prec': train_prec,
+                    'valid/prec': valid_prec,
+                    'train/recall': train_recall,
+                    'valid/recall': valid_recall,
+                    'train/tnr': train_tnr,
+                    'valid/tnr': valid_tnr,
+                    'train/fpr': train_fpr,
+                    'valid/fpr': valid_fpr,
+                    'train/fnr': train_fnr,
+                    'valid/fnr': valid_fnr,
+                    'epoch': idx,
+                    'gpu_ram_mb': gpu_mem,
+                    'elapsed_time_s': time.time() - train_start_time
+                })                    
             
             # save model checkpoint at ep10
             if idx == 9:
@@ -352,6 +432,21 @@ def evaluate(args, accelerator, eval_dataloader, eval_dataset, model, tokenizer,
         "eval_fpr": eval_fpr,
         "eval_fnr": eval_fnr,
     }
+    gpu_mem = None
+    if torch.cuda.is_available():
+        gpu_mem = torch.cuda.max_memory_allocated() / (1024 ** 2)
+    if accelerator.is_main_process:
+        wandb.log({
+            'valid/loss': float(perplexity),
+            'valid/acc': eval_acc,
+            'valid/prec': eval_prec,
+            'valid/recall': eval_recall,
+            'valid/f1': eval_f1,
+            'valid/tnr': eval_tnr,
+            'valid/fpr': eval_fpr,
+            'valid/fnr': eval_fnr,
+            'valid/gpu_ram_mb': gpu_mem
+        })
     return result
 
 def load_data(jsonl_path):
@@ -462,9 +557,23 @@ def test(args, accelerator, model, tokenizer):
         "test_recall": test_recall,
         "test_f1": test_f1,
         "test_tnr": test_tnr,
-        "test_tnr": test_tnr,
+        "test_fpr": test_fpr,
         "test_fnr": test_fnr,
     }
+    gpu_mem = None
+    if torch.cuda.is_available():
+        gpu_mem = torch.cuda.max_memory_allocated() / (1024 ** 2)
+    if accelerator.is_main_process:
+        wandb.log({
+            'test/acc': test_acc,
+            'test/prec': test_prec,
+            'test/recall': test_recall,
+            'test/f1': test_f1,
+            'test/tnr': test_tnr,
+            'test/fpr': test_fpr,
+            'test/fnr': test_fnr,
+            'test/gpu_ram_mb': gpu_mem
+        })
     return result 
     
 def test_prob(args, model, tokenizer):
@@ -626,6 +735,9 @@ def main():
 
     args = parser.parse_args()
 
+    # Initialize wandb for all modes
+    wandb.login(key="fb5a5b79b5aafdb17cb882dd76ac2e0cde9adf8d")
+    wandb.init(project=args.project, name=args.model_dir, config=vars(args))
 
     accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps) 
     device = accelerator.device
@@ -721,6 +833,7 @@ def main():
         model.to(args.device)
         test_prob(args, model, tokenizer)
     
+    wandb.finish()
     return results
 
 
