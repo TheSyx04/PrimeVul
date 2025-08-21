@@ -185,7 +185,7 @@ def train(args, train_dataset, model, tokenizer):
     best_acc=0.0
     patience = 0
     wandb.login(key="fb5a5b79b5aafdb17cb882dd76ac2e0cde9adf8d")
-    wandb.init(project=args.project, name=args.model_dir, config=vars(args))
+    wandb.init(project="vulguard-llms", name=args.model_dir, config=vars(args))
     model.zero_grad()
     train_start_time = time.time()
  
@@ -261,25 +261,25 @@ def train(args, train_dataset, model, tokenizer):
                         logger.info("  %s = %s", key, round(value,4))                    
                 valid_loss, valid_acc, valid_prec, valid_recall, valid_f1, valid_tnr, valid_fpr, valid_fnr = results.values()
                 wandb.log({
-                    'Loss/train': avg_loss,
-                    'Loss/valid': valid_loss,
-                    'Acc/train': train_acc,
-                    'Acc/valid': valid_acc,
-                    'F1/train': train_f1,
-                    'F1/valid': valid_f1,
-                    'Prec/train': train_prec,
-                    'Prec/valid': valid_prec,
-                    'Recall/train': train_recall,
-                    'Recall/valid': valid_recall,
-                    'TNR/train': train_tnr,
-                    'TNR/valid': valid_tnr,
-                    'FPR/train': train_fpr,
-                    'FPR/valid': valid_fpr,
-                    'FNR/train': train_fnr,
-                    'FNR/valid': valid_fnr,
+                    'train/loss': avg_loss,
+                    'valid/loss': valid_loss,
+                    'train/acc': train_acc,
+                    'valid/acc': valid_acc,
+                    'train/f1': train_f1,
+                    'valid/f1': valid_f1,
+                    'train/prec': train_prec,
+                    'valid/prec': valid_prec,
+                    'train/recall': train_recall,
+                    'valid/recall': valid_recall,
+                    'train/tnr': train_tnr,
+                    'valid/tnr': valid_tnr,
+                    'train/fpr': train_fpr,
+                    'valid/fpr': valid_fpr,
+                    'train/fnr': train_fnr,
+                    'valid/fnr': valid_fnr,
                     'step': step,
-                    'GPU_RAM_MB': gpu_mem,
-                    'Elapsed_time_s': time.time() - train_start_time
+                    'gpu_ram_mb': gpu_mem,
+                    'elapsed_time_s': time.time() - train_start_time
                 })
 
                 
@@ -323,25 +323,25 @@ def train(args, train_dataset, model, tokenizer):
                     logger.info("  %s = %s", key, round(value,4))                    
             valid_loss, valid_acc, valid_prec, valid_recall, valid_f1, valid_tnr, valid_fpr, valid_fnr = results.values()
             wandb.log({
-                'Loss/train': avg_loss,
-                'Loss/valid': valid_loss,
-                'Acc/train': train_acc,
-                'Acc/valid': valid_acc,
-                'F1/train': train_f1,
-                'F1/valid': valid_f1,
-                'Prec/train': train_prec,
-                'Prec/valid': valid_prec,
-                'Recall/train': train_recall,
-                'Recall/valid': valid_recall,
-                'TNR/train': train_tnr,
-                'TNR/valid': valid_tnr,
-                'FPR/train': train_fpr,
-                'FPR/valid': valid_fpr,
-                'FNR/train': train_fnr,
-                'FNR/valid': valid_fnr,
+                'train/loss': avg_loss,
+                'valid/loss': valid_loss,
+                'train/acc': train_acc,
+                'valid/acc': valid_acc,
+                'train/f1': train_f1,
+                'valid/f1': valid_f1,
+                'train/prec': train_prec,
+                'valid/prec': valid_prec,
+                'train/recall': train_recall,
+                'valid/recall': valid_recall,
+                'train/tnr': train_tnr,
+                'valid/tnr': valid_tnr,
+                'train/fpr': train_fpr,
+                'valid/fpr': valid_fpr,
+                'train/fnr': train_fnr,
+                'valid/fnr': valid_fnr,
                 'epoch': idx,
-                'GPU_RAM_MB': gpu_mem,
-                'Elapsed_time_s': time.time() - train_start_time
+                'gpu_ram_mb': gpu_mem,
+                'elapsed_time_s': time.time() - train_start_time
             })
             
             # save model checkpoint at ep10
@@ -479,15 +479,15 @@ def evaluate(args, model, tokenizer,eval_when_training=False):
     if torch.cuda.is_available():
         gpu_mem = torch.cuda.max_memory_allocated(args.device) / (1024 ** 2)
     wandb.log({
-        'Eval/Loss': float(perplexity),
-        'Eval/Acc': eval_acc,
-        'Eval/Prec': eval_prec,
-        'Eval/Recall': eval_recall,
-        'Eval/F1': eval_f1,
-        'Eval/TNR': eval_tnr,
-        'Eval/FPR': eval_fpr,
-        'Eval/FNR': eval_fnr,
-        'Eval/GPU_RAM_MB': gpu_mem
+        'valid/loss': float(perplexity),
+        'valid/acc': eval_acc,
+        'valid/prec': eval_prec,
+        'valid/recall': eval_recall,
+        'valid/f1': eval_f1,
+        'valid/tnr': eval_tnr,
+        'valid/fpr': eval_fpr,
+        'valid/fnr': eval_fnr,
+        'valid/gpu_ram_mb': gpu_mem
     })
     return result
 
@@ -553,19 +553,22 @@ def test(args, model, tokenizer):
     if torch.cuda.is_available():
         gpu_mem = torch.cuda.max_memory_allocated(args.device) / (1024 ** 2)
     wandb.log({
-        'Test/Acc': test_acc,
-        'Test/Prec': test_prec,
-        'Test/Recall': test_recall,
-        'Test/F1': test_f1,
-        'Test/TNR': test_tnr,
-        'Test/FPR': test_fpr,
-        'Test/FNR': test_fnr,
-        'Test/GPU_RAM_MB': gpu_mem
+        'test/acc': test_acc,
+        'test/prec': test_prec,
+        'test/recall': test_recall,
+        'test/f1': test_f1,
+        'test/tnr': test_tnr,
+        'test/fpr': test_fpr,
+        'test/fnr': test_fnr,
+        'test/gpu_ram_mb': gpu_mem
     })
     return result 
                         
 def main():
     parser = argparse.ArgumentParser()
+        # Initialize wandb for all modes
+    wandb.login(key="fb5a5b79b5aafdb17cb882dd76ac2e0cde9adf8d")
+    wandb.init(project=args.project, name=args.model_dir, config=vars(args))
 
     ## Required parameters
     parser.add_argument('--project', type=str, required=True, help="using dataset from this project.")
@@ -742,8 +745,6 @@ def main():
                                             cache_dir=args.cache_dir if args.cache_dir else None)    
     else:
         model = model_class(config)
-    
-    
     if args.model_type == "t5":
         # t5-base config here https://huggingface.co/t5-base/blob/main/config.json
         # codet5-base config here https://huggingface.co/Salesforce/codet5-base/blob/main/config.json
