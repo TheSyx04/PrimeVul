@@ -403,7 +403,6 @@ def train(args, train_dataset, model, tokenizer):
                 torch.save(model_to_save.state_dict(), output_dir)
                 logger.info("Saving model checkpoint to %s", output_dir)
             break
-    wandb.finish()
 
 def calculate_metrics(labels, preds):
     acc=accuracy_score(labels, preds)
@@ -798,7 +797,7 @@ def main():
         for key in sorted(result.keys()):
             logger.info("  %s = %s", key, str(round(result[key],4)))
     
-    
+    wandb.finish()
     return results
 
 
