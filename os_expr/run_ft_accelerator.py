@@ -792,10 +792,18 @@ def main():
 
     if args.model_name_or_path:
         if args.model_type in ["starcoder"]:
-            model = model_class.from_pretrained(args.model_name_or_path,
-                                                use_cache = False,
-                                                torch_dtype = torch.bfloat16,
-                                                attn_implementation = "flash_attention_2")
+            try:
+                # Try with flash_attention_2 first
+                model = model_class.from_pretrained(args.model_name_or_path,
+                                                    use_cache = False,
+                                                    torch_dtype = torch.bfloat16,
+                                                    attn_implementation = "flash_attention_2")
+            except ImportError:
+                # Fallback to default attention if flash_attn is not installed
+                print("flash_attn not available, falling back to default attention implementation")
+                model = model_class.from_pretrained(args.model_name_or_path,
+                                                    use_cache = False,
+                                                    torch_dtype = torch.bfloat16)
         else:
             model = model_class.from_pretrained(args.model_name_or_path,
                                                 torch_dtype = torch.bfloat16,)
