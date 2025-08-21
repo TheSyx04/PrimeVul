@@ -18,10 +18,8 @@ import torch
 from torch.utils.data import DataLoader, Dataset, SequentialSampler, RandomSampler
 from torch.utils.data.distributed import DistributedSampler
 import json
-try:
-    from torch.utils.tensorboard import SummaryWriter
-except:
-    from tensorboardX import SummaryWriter
+import wandb
+import time
 
 from tqdm import tqdm, trange
 import multiprocessing
@@ -186,16 +184,13 @@ def train(args, train_dataset, model, tokenizer):
     best_f1=0.0
     best_acc=0.0
     patience = 0
-    short_comment_str = args.output_dir.split('/')[-1]
-    # tensorboard_logdir = f'runs_same_projects/{short_comment_str}'
-    tensorboard_logdir = f'{args.run_dir}/{short_comment_str}'
-    writer = SummaryWriter(tensorboard_logdir)
-    # writer = SummaryWriter(tensorboard_logdir, comment=comment_str)
-    # model.resize_token_embeddings(len(tokenizer))
+    wandb.login(key="fb5a5b79b5aafdb17cb882dd76ac2e0cde9adf8d")
+    wandb.init(project=args.project, name=args.model_dir, config=vars(args))
     model.zero_grad()
+    train_start_time = time.time()
  
     step = 0
-    for idx in range(args.start_epoch, int(args.num_train_epochs)): 
+    for idx in range(args.start_epoch, int(args.num_train_epochs)):
         bar = tqdm(train_dataloader,total=len(train_dataloader))
         tr_num=0
         train_loss=0
@@ -248,6 +243,10 @@ def train(args, train_dataset, model, tokenizer):
             # log after every logging_steps (e.g., 1000)
             ###
             if (step + 1) % args.logging_steps == 0:
+                # Track GPU RAM usage
+                gpu_mem = None
+                if torch.cuda.is_available():
+                    gpu_mem = torch.cuda.max_memory_allocated(args.device) / (1024 ** 2)  # MB
                 avg_loss=round(train_loss/tr_num,5)
                 step_logits_lst=np.concatenate(logits_lst,0)
                 step_labels_lst=np.concatenate(labels_lst,0)
@@ -261,11 +260,27 @@ def train(args, train_dataset, model, tokenizer):
                     for key, value in results.items():
                         logger.info("  %s = %s", key, round(value,4))                    
                 valid_loss, valid_acc, valid_prec, valid_recall, valid_f1, valid_tnr, valid_fpr, valid_fnr = results.values()
-                writer.add_scalars('Loss', {'train': avg_loss, 'valid': valid_loss}, step)
-                writer.add_scalars('Acc', {'train': train_acc, 'valid': valid_acc}, step)
-                writer.add_scalars('F1', {'train': train_f1, 'valid': valid_f1}, step)
-                writer.add_scalars('Prec', {'train': train_prec, 'valid': valid_prec}, step)
-                writer.add_scalars('Recall', {'train': train_recall, 'valid': valid_recall}, step)
+                wandb.log({
+                    'Loss/train': avg_loss,
+                    'Loss/valid': valid_loss,
+                    'Acc/train': train_acc,
+                    'Acc/valid': valid_acc,
+                    'F1/train': train_f1,
+                    'F1/valid': valid_f1,
+                    'Prec/train': train_prec,
+                    'Prec/valid': valid_prec,
+                    'Recall/train': train_recall,
+                    'Recall/valid': valid_recall,
+                    'TNR/train': train_tnr,
+                    'TNR/valid': valid_tnr,
+                    'FPR/train': train_fpr,
+                    'FPR/valid': valid_fpr,
+                    'FNR/train': train_fnr,
+                    'FNR/valid': valid_fnr,
+                    'step': step,
+                    'GPU_RAM_MB': gpu_mem,
+                    'Elapsed_time_s': time.time() - train_start_time
+                })
 
                 
                 # Save model checkpoint    
@@ -298,18 +313,36 @@ def train(args, train_dataset, model, tokenizer):
         else:
             preds_lst=logits_lst[:,0]>0.5
         train_acc, train_prec, train_recall, train_f1, train_tnr, train_fpr, train_fnr = calculate_metrics(labels_lst, preds_lst)
-        
         if args.local_rank in [-1, 0]:
+            gpu_mem = None
+            if torch.cuda.is_available():
+                gpu_mem = torch.cuda.max_memory_allocated(args.device) / (1024 ** 2)
             if args.local_rank == -1 and args.evaluate_during_training:  # Only evaluate when single GPU otherwise metrics may not average well
                 results = evaluate(args, model, tokenizer,eval_when_training=True)
                 for key, value in results.items():
                     logger.info("  %s = %s", key, round(value,4))                    
             valid_loss, valid_acc, valid_prec, valid_recall, valid_f1, valid_tnr, valid_fpr, valid_fnr = results.values()
-            writer.add_scalars('Loss', {'train': avg_loss, 'valid': valid_loss}, step)
-            writer.add_scalars('Acc', {'train': train_acc, 'valid': valid_acc}, step)
-            writer.add_scalars('F1', {'train': train_f1, 'valid': valid_f1}, step)
-            writer.add_scalars('Prec', {'train': train_prec, 'valid': valid_prec}, step)
-            writer.add_scalars('Recall', {'train': train_recall, 'valid': valid_recall}, step)
+            wandb.log({
+                'Loss/train': avg_loss,
+                'Loss/valid': valid_loss,
+                'Acc/train': train_acc,
+                'Acc/valid': valid_acc,
+                'F1/train': train_f1,
+                'F1/valid': valid_f1,
+                'Prec/train': train_prec,
+                'Prec/valid': valid_prec,
+                'Recall/train': train_recall,
+                'Recall/valid': valid_recall,
+                'TNR/train': train_tnr,
+                'TNR/valid': valid_tnr,
+                'FPR/train': train_fpr,
+                'FPR/valid': valid_fpr,
+                'FNR/train': train_fnr,
+                'FNR/valid': valid_fnr,
+                'epoch': idx,
+                'GPU_RAM_MB': gpu_mem,
+                'Elapsed_time_s': time.time() - train_start_time
+            })
             
             # save model checkpoint at ep10
             if idx == 9:
@@ -370,7 +403,7 @@ def train(args, train_dataset, model, tokenizer):
                 torch.save(model_to_save.state_dict(), output_dir)
                 logger.info("Saving model checkpoint to %s", output_dir)
             break
-    writer.close()                
+    wandb.finish()
 
 def calculate_metrics(labels, preds):
     acc=accuracy_score(labels, preds)
@@ -442,6 +475,20 @@ def evaluate(args, model, tokenizer,eval_when_training=False):
         "eval_fpr": eval_fpr,
         "eval_fnr": eval_fnr,
     }
+    gpu_mem = None
+    if torch.cuda.is_available():
+        gpu_mem = torch.cuda.max_memory_allocated(args.device) / (1024 ** 2)
+    wandb.log({
+        'Eval/Loss': float(perplexity),
+        'Eval/Acc': eval_acc,
+        'Eval/Prec': eval_prec,
+        'Eval/Recall': eval_recall,
+        'Eval/F1': eval_f1,
+        'Eval/TNR': eval_tnr,
+        'Eval/FPR': eval_fpr,
+        'Eval/FNR': eval_fnr,
+        'Eval/GPU_RAM_MB': gpu_mem
+    })
     return result
 
 def test(args, model, tokenizer):
@@ -502,6 +549,19 @@ def test(args, model, tokenizer):
         "test_fpr": test_fpr,
         "test_fnr": test_fnr,
     }
+    gpu_mem = None
+    if torch.cuda.is_available():
+        gpu_mem = torch.cuda.max_memory_allocated(args.device) / (1024 ** 2)
+    wandb.log({
+        'Test/Acc': test_acc,
+        'Test/Prec': test_prec,
+        'Test/Recall': test_recall,
+        'Test/F1': test_f1,
+        'Test/TNR': test_tnr,
+        'Test/FPR': test_fpr,
+        'Test/FNR': test_fnr,
+        'Test/GPU_RAM_MB': gpu_mem
+    })
     return result 
                         
 def main():
