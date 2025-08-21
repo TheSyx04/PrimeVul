@@ -566,9 +566,6 @@ def test(args, model, tokenizer):
                         
 def main():
     parser = argparse.ArgumentParser()
-        # Initialize wandb for all modes
-    wandb.login(key="fb5a5b79b5aafdb17cb882dd76ac2e0cde9adf8d")
-    wandb.init(project=args.project, name=args.model_dir, config=vars(args))
 
     ## Required parameters
     parser.add_argument('--project', type=str, required=True, help="using dataset from this project.")
@@ -674,6 +671,10 @@ def main():
     
 
     args = parser.parse_args()
+
+    # Initialize wandb for all modes
+    wandb.login(key="fb5a5b79b5aafdb17cb882dd76ac2e0cde9adf8d")
+    wandb.init(project=args.project, name=args.model_dir, config=vars(args))
 
     # Setup CUDA, GPU & distributed training
     if args.local_rank == -1 or args.no_cuda:
