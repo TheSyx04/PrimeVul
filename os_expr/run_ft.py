@@ -185,7 +185,7 @@ def train(args, train_dataset, model, tokenizer):
     best_acc=0.0
     patience = 0
     wandb.login(key="fb5a5b79b5aafdb17cb882dd76ac2e0cde9adf8d")
-    wandb.init(project="vulguard-llms", name=args.model_dir, config=vars(args))
+    wandb.init(project=args.project, name=args.model_dir, config=vars(args))
     model.zero_grad()
     train_start_time = time.time()
  
