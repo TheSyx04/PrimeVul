@@ -60,9 +60,22 @@ class InputFeatures(object):
         self.idx=str(idx)
         self.label=label
 
+import re
+
+def clean_code_change(text):
+    # Remove surrogate pairs and non-UTF-8 characters
+    if not isinstance(text, str):
+        return ""
+    # Remove surrogates
+    cleaned = re.sub(r'[\ud800-\udfff]', '', text)
+    # Optionally, remove non-printable/control characters
+    cleaned = ''.join(c for c in cleaned if c.isprintable())
+    return cleaned
+
         
 def convert_examples_to_features(js,tokenizer,args):
     code = js.get('func', js.get('code_change', ''))
+    code = clean_code_change(code)
     if args.model_type in ["codet5", "t5"]:
         code_tokens = tokenizer.tokenize(code)
         if '</s>' in code_tokens:
