@@ -749,14 +749,7 @@ def main():
         # t5-base config here https://huggingface.co/t5-base/blob/main/config.json
         # codet5-base config here https://huggingface.co/Salesforce/codet5-base/blob/main/config.json
         config.eos_token_id = tokenizer.eos_token_id
-    
-    # Set pad_token_id safely
-    if tokenizer.pad_token is not None:
-        config.pad_token_id = tokenizer(tokenizer.pad_token, truncation=True)['input_ids'][0]
-    else:
-        # If pad_token is None, use the tokenizer's pad_token_id directly
-        config.pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
-    
+    config.pad_token_id = tokenizer(tokenizer.pad_token, truncation=True)['input_ids'][0]
     # model.resize_token_embeddings(len(tokenizer))
     # print(f"DEBUG!!! confg.use_return_dict = {config.use_return_dict}")
     if args.model_type in ["codet5", "t5"]:

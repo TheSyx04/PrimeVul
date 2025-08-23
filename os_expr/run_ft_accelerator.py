@@ -802,13 +802,8 @@ def main():
     else:
         model = model_class(config)
     
-    # Set pad_token_id safely
-    if tokenizer.pad_token is not None:
-        config.pad_token_id = tokenizer(tokenizer.pad_token, truncation=True)['input_ids'][0]
-    else:
-        # If pad_token is None, use the tokenizer's pad_token_id directly
-        config.pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
-    
+
+    config.pad_token_id = tokenizer(tokenizer.pad_token, truncation=True)['input_ids'][0]
     if args.model_type in ['codegen', 'starcoder']:
         model = DecoderClassifier(model,config,tokenizer,args)
     else:
