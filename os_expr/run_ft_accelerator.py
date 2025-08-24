@@ -671,6 +671,10 @@ def main():
     if hasattr(config, '_attn_implementation_autoset') and hasattr(config, '_attn_implementation'):
         config._attn_implementation_autoset = False
     
+    # Disable use_cache for StarCoder2 models to prevent initialization errors
+    if args.model_type in ["starcoder"]:
+        config.use_cache = False
+    
     config.num_labels = 2
     if args.model_type not in ["codegen"]:
         tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name,
@@ -697,7 +701,6 @@ def main():
                 
                 model = model_class.from_pretrained(args.model_name_or_path,
                                                     config=config,
-                                                    use_cache = False,
                                                     torch_dtype = torch.bfloat16,
                                                     attn_implementation = "flash_attention_2")
             except (ImportError, ModuleNotFoundError, RuntimeError, Exception) as e:
@@ -705,15 +708,21 @@ def main():
                 logger.warning(f"flash_attn import/initialization failed ({type(e).__name__}: {e}), falling back to eager attention")
                 logger.info("This might be due to Python 3.13 compatibility issues with flash-attn")
                 
-                # Explicitly set eager attention in config
-                if hasattr(config, '_attn_implementation'):
-                    config._attn_implementation = "eager"
-                
-                model = model_class.from_pretrained(args.model_name_or_path,
-                                                    config=config,
-                                                    use_cache = False,
-                                                    torch_dtype = torch.bfloat16,
-                                                    attn_implementation = "eager")
+                try:
+                    # Explicitly set eager attention in config
+                    if hasattr(config, '_attn_implementation'):
+                        config._attn_implementation = "eager"
+                    
+                    model = model_class.from_pretrained(args.model_name_or_path,
+                                                        config=config,
+                                                        torch_dtype = torch.bfloat16,
+                                                        attn_implementation = "eager")
+                except Exception as e2:
+                    # Final fallback without specifying attention implementation
+                    logger.warning(f"Eager attention also failed ({type(e2).__name__}: {e2}), using default attention")
+                    model = model_class.from_pretrained(args.model_name_or_path,
+                                                        config=config,
+                                                        torch_dtype = torch.bfloat16)
         else:
             model = model_class.from_pretrained(args.model_name_or_path,
                                                 torch_dtype = torch.bfloat16,)
