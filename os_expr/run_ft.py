@@ -31,10 +31,11 @@ import multiprocessing
 from model import Model, DefectModel
 
 cpu_cont = multiprocessing.cpu_count()
-from transformers import (WEIGHTS_NAME, AdamW, get_linear_schedule_with_warmup,
+from transformers import (WEIGHTS_NAME, get_linear_schedule_with_warmup,
                           BertConfig, BertForMaskedLM, BertTokenizer,
                           T5Config, T5ForConditionalGeneration,
                           RobertaConfig, RobertaForSequenceClassification, RobertaTokenizer)
+from torch.optim import AdamW
 
 # huggingface/tokenizers: The current process just got forked, after parallelism has already been used. Disabling parallelism to avoid deadlocks...
 import os
