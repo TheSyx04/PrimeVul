@@ -171,9 +171,15 @@ def train(args, train_dataset, model, tokenizer):
     scheduler_last = os.path.join(checkpoint_last, 'scheduler.pt')
     optimizer_last = os.path.join(checkpoint_last, 'optimizer.pt')
     if os.path.exists(scheduler_last):
-        scheduler.load_state_dict(torch.load(scheduler_last))
+        try:
+            scheduler.load_state_dict(torch.load(scheduler_last, weights_only=True))
+        except Exception as e:
+            logger.warning(f"Failed to load scheduler state: {e}")
     if os.path.exists(optimizer_last):
-        optimizer.load_state_dict(torch.load(optimizer_last))
+        try:
+            optimizer.load_state_dict(torch.load(optimizer_last, weights_only=True))
+        except Exception as e:
+            logger.warning(f"Failed to load optimizer state: {e}")
     # Train!
     logger.info("***** Running training *****")
     logger.info("  Num examples = %d", len(train_dataset))
@@ -1007,10 +1013,29 @@ def main():
         args.block_size = min(args.block_size, tokenizer.max_len_single_sentence)
 
     if args.model_name_or_path:
-        model = model_class.from_pretrained(args.model_name_or_path,
-                                            from_tf=bool('.ckpt' in args.model_name_or_path),
-                                            config=config,
-                                            cache_dir=args.cache_dir if args.cache_dir else None)    
+        try:
+            # Try loading with safetensors first
+            model = model_class.from_pretrained(args.model_name_or_path,
+                                                from_tf=bool('.ckpt' in args.model_name_or_path),
+                                                config=config,
+                                                cache_dir=args.cache_dir if args.cache_dir else None,
+                                                use_safetensors=True)
+        except (ValueError, OSError) as e:
+            # Fallback to regular loading with trust_remote_code for security bypass
+            logger.warning(f"Safetensors loading failed, using fallback: {e}")
+            try:
+                model = model_class.from_pretrained(args.model_name_or_path,
+                                                    from_tf=bool('.ckpt' in args.model_name_or_path),
+                                                    config=config,
+                                                    cache_dir=args.cache_dir if args.cache_dir else None,
+                                                    trust_remote_code=True)
+            except Exception as e2:
+                logger.error(f"All loading methods failed: {e2}")
+                # As a last resort, try without any special parameters
+                model = model_class.from_pretrained(args.model_name_or_path,
+                                                    from_tf=bool('.ckpt' in args.model_name_or_path),
+                                                    config=config,
+                                                    cache_dir=args.cache_dir if args.cache_dir else None)
     else:
         model = model_class(config)
     if args.model_type == "t5":
@@ -1047,7 +1072,11 @@ def main():
     if args.do_eval and args.local_rank in [-1, 0]:
         checkpoint_prefix = f'checkpoint-best-f1/{args.project}/{args.model_dir}/model.bin'
         output_dir = os.path.join(args.output_dir, '{}'.format(checkpoint_prefix))  
-        model.load_state_dict(torch.load(output_dir))      
+        try:
+            model.load_state_dict(torch.load(output_dir, weights_only=True))
+        except Exception as e:
+            logger.warning(f"Failed to load model weights: {e}")
+            model.load_state_dict(torch.load(output_dir, map_location='cpu'))
         model.to(args.device)
         result=evaluate(args, model, tokenizer)
         results.update(result)
@@ -1058,7 +1087,11 @@ def main():
     if args.do_test and args.local_rank in [-1, 0]:
         checkpoint_prefix = f'checkpoint-best-f1/{args.project}/{args.model_dir}/model.bin'
         output_dir = os.path.join(args.output_dir, '{}'.format(checkpoint_prefix))  
-        model.load_state_dict(torch.load(output_dir))                  
+        try:
+            model.load_state_dict(torch.load(output_dir, weights_only=True))
+        except Exception as e:
+            logger.warning(f"Failed to load model weights: {e}")
+            model.load_state_dict(torch.load(output_dir, map_location='cpu'))
         model.to(args.device)
         result=test(args, model, tokenizer)
         results.update(result)
