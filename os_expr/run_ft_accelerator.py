@@ -6,6 +6,8 @@ import argparse
 import logging
 import os
 os.environ["HF_ENDPOINT"] = "https://huggingface.co"
+# Set environment variable to help with flash attention compatibility
+os.environ["FLASH_ATTENTION_SKIP_CUDA_CHECK"] = "1"
 
 import math
 
@@ -665,6 +667,10 @@ def main():
     config = config_class.from_pretrained(args.config_name if args.config_name else args.model_name_or_path,
                                           cache_dir=args.cache_dir if args.cache_dir else None)
     
+    # Explicitly disable auto flash attention detection to prevent compatibility issues
+    if hasattr(config, '_attn_implementation_autoset') and hasattr(config, '_attn_implementation'):
+        config._attn_implementation_autoset = False
+    
     config.num_labels = 2
     if args.model_type not in ["codegen"]:
         tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name,
@@ -679,10 +685,35 @@ def main():
 
     if args.model_name_or_path:
         if args.model_type in ["starcoder"]:
-            model = model_class.from_pretrained(args.model_name_or_path,
-                                                use_cache = False,
-                                                torch_dtype = torch.bfloat16,
-                                                attn_implementation = "flash_attention_2")
+            try:
+                # Explicitly import flash_attn to check availability in current environment
+                import flash_attn
+                import sys
+                logger.info(f"flash_attn version {flash_attn.__version__} detected on Python {sys.version_info}, using flash_attention_2")
+                
+                # Try setting attention implementation in config first
+                if hasattr(config, '_attn_implementation'):
+                    config._attn_implementation = "flash_attention_2"
+                
+                model = model_class.from_pretrained(args.model_name_or_path,
+                                                    config=config,
+                                                    use_cache = False,
+                                                    torch_dtype = torch.bfloat16,
+                                                    attn_implementation = "flash_attention_2")
+            except (ImportError, ModuleNotFoundError, RuntimeError, Exception) as e:
+                # More comprehensive exception handling for flash attention issues
+                logger.warning(f"flash_attn import/initialization failed ({type(e).__name__}: {e}), falling back to eager attention")
+                logger.info("This might be due to Python 3.13 compatibility issues with flash-attn")
+                
+                # Explicitly set eager attention in config
+                if hasattr(config, '_attn_implementation'):
+                    config._attn_implementation = "eager"
+                
+                model = model_class.from_pretrained(args.model_name_or_path,
+                                                    config=config,
+                                                    use_cache = False,
+                                                    torch_dtype = torch.bfloat16,
+                                                    attn_implementation = "eager")
         else:
             model = model_class.from_pretrained(args.model_name_or_path,
                                                 torch_dtype = torch.bfloat16,)
