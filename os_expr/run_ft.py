@@ -12,8 +12,13 @@ os.environ["HF_ENDPOINT"] = "https://huggingface.co"
 
 import random
 
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score, confusion_matrix,
+    roc_auc_score, precision_recall_curve, matthews_corrcoef, auc
+)
 import numpy as np
+import pandas as pd
+import math
 import torch
 from torch.utils.data import DataLoader, Dataset, SequentialSampler, RandomSampler
 from torch.utils.data.distributed import DistributedSampler
@@ -252,9 +257,18 @@ def train(args, train_dataset, model, tokenizer):
                 step_labels_lst=np.concatenate(labels_lst,0)
                 if args.model_type in set(['codet5', 't5']):
                     step_preds_lst=step_logits_lst[:,1]>0.5
+                    step_proba_lst=step_logits_lst[:,1]
                 else:
                     step_preds_lst=step_logits_lst[:,0]>0.5
-                train_acc, train_prec, train_recall, train_f1, train_tnr, train_fpr, train_fnr = calculate_metrics(step_labels_lst, step_preds_lst)
+                    step_proba_lst=step_logits_lst[:,0]
+                
+                # Use comprehensive metrics for training evaluation
+                train_metrics = eval_metrics_comprehensive(step_labels_lst, step_preds_lst, step_proba_lst)
+                train_acc = train_metrics['accuracy']
+                train_prec = train_metrics['precision']
+                train_recall = train_metrics['recall']
+                train_f1 = train_metrics['f1_score']
+                train_tnr, train_fpr, train_fnr = calculate_metrics(step_labels_lst, step_preds_lst)[4:7]
                 if args.local_rank == -1 and args.evaluate_during_training:  # Only evaluate when single GPU otherwise metrics may not average well
                     results = evaluate(args, model, tokenizer,eval_when_training=True)
                     for key, value in results.items():
@@ -277,6 +291,9 @@ def train(args, train_dataset, model, tokenizer):
                     'valid/fpr': valid_fpr,
                     'train/fnr': train_fnr,
                     'valid/fnr': valid_fnr,
+                    'train/roc_auc': train_metrics.get('roc_auc', 0),
+                    'train/pr_auc': train_metrics.get('pr_auc', 0),
+                    'train/mcc': train_metrics.get('mcc', 0),
                     'step': step,
                     'gpu_ram_mb': gpu_mem,
                     'elapsed_time_s': time.time() - train_start_time
@@ -310,9 +327,18 @@ def train(args, train_dataset, model, tokenizer):
         labels_lst=np.concatenate(labels_lst,0)
         if args.model_type in set(['codet5', 't5']):
             preds_lst=logits_lst[:,1]>0.5
+            proba_lst=logits_lst[:,1]
         else:
             preds_lst=logits_lst[:,0]>0.5
-        train_acc, train_prec, train_recall, train_f1, train_tnr, train_fpr, train_fnr = calculate_metrics(labels_lst, preds_lst)
+            proba_lst=logits_lst[:,0]
+        
+        # Use comprehensive metrics for epoch training evaluation
+        train_metrics = eval_metrics_comprehensive(labels_lst, preds_lst, proba_lst)
+        train_acc = train_metrics['accuracy']
+        train_prec = train_metrics['precision']
+        train_recall = train_metrics['recall']
+        train_f1 = train_metrics['f1_score']
+        train_tnr, train_fpr, train_fnr = calculate_metrics(labels_lst, preds_lst)[4:7]
         if args.local_rank in [-1, 0]:
             gpu_mem = None
             if torch.cuda.is_available():
@@ -339,6 +365,9 @@ def train(args, train_dataset, model, tokenizer):
                 'valid/fpr': valid_fpr,
                 'train/fnr': train_fnr,
                 'valid/fnr': valid_fnr,
+                'train/roc_auc': train_metrics.get('roc_auc', 0),
+                'train/pr_auc': train_metrics.get('pr_auc', 0),
+                'train/mcc': train_metrics.get('mcc', 0),
                 'epoch': idx,
                 'gpu_ram_mb': gpu_mem,
                 'elapsed_time_s': time.time() - train_start_time
@@ -417,6 +446,129 @@ def calculate_metrics(labels, preds):
         round(recall,4)*100, round(f1,4)*100, round(tnr,4)*100, \
             round(fpr,4)*100, round(fnr,4)*100
 
+def get_recall_at_k_percent_effort(percent_effort, result_df_arg, real_buggy_commits):
+    cum_LOC_k_percent = (percent_effort / 100) * result_df_arg.iloc[-1]['cum_LOC']
+    buggy_line_k_percent = result_df_arg[result_df_arg['cum_LOC'] <= cum_LOC_k_percent]
+    buggy_commit = buggy_line_k_percent[buggy_line_k_percent['label'] == 1]
+    recall_k_percent_effort = len(buggy_commit) / float(len(real_buggy_commits))
+    return recall_k_percent_effort
+
+def eval_metrics_comprehensive(labels, preds, proba_scores, ids=None, has_loc=False, loc_data=None):
+    """
+    Comprehensive evaluation metrics including AUC, precision-recall AUC, MCC, and effort-aware metrics
+    
+    Args:
+        labels: true labels (0/1)
+        preds: predicted labels (0/1) 
+        proba_scores: prediction probabilities
+        ids: example ids (optional)
+        has_loc: whether LOC data is available for effort-aware metrics
+        loc_data: dictionary mapping ids to LOC values (if has_loc=True)
+    
+    Returns:
+        Dictionary with all metrics
+    """
+    # Basic metrics
+    acc = accuracy_score(y_true=labels, y_pred=preds)
+    f1 = f1_score(y_true=labels, y_pred=preds)
+    prc = precision_score(y_true=labels, y_pred=preds)
+    rc = recall_score(y_true=labels, y_pred=preds)
+    mcc = matthews_corrcoef(y_true=labels, y_pred=preds)
+    
+    # AUC metrics
+    roc_auc = roc_auc_score(y_true=labels, y_score=proba_scores)
+    precisions, recalls, _ = precision_recall_curve(y_true=labels, probas_pred=proba_scores)
+    pr_auc = auc(recalls, precisions)
+    
+    metrics = {
+        'accuracy': round(acc * 100, 4),
+        'f1_score': round(f1 * 100, 4),
+        'precision': round(prc * 100, 4),
+        'recall': round(rc * 100, 4),
+        'mcc': round(mcc, 4),
+        'roc_auc': round(roc_auc, 4),
+        'pr_auc': round(pr_auc, 4)
+    }
+    
+    # Effort-aware metrics (if LOC data is available)
+    if has_loc and loc_data is not None and ids is not None:
+        try:
+            # Create DataFrame for effort calculations
+            result_df = pd.DataFrame({
+                'id': ids,
+                'label': labels,
+                'prediction': preds,
+                'probability': proba_scores
+            })
+            
+            # Add LOC data
+            result_df['LOC'] = result_df['id'].map(loc_data)
+            result_df = result_df.dropna(subset=['LOC'])
+            
+            if len(result_df) > 0:
+                # Calculate defect density
+                result_df['defect_density'] = result_df['probability'] / result_df['LOC']
+                result_df['actual_defect_density'] = result_df['label'] / result_df['LOC']
+                
+                # Sort by defect density
+                result_df = result_df.sort_values(by='defect_density', ascending=False)
+                actual_result_df = result_df.sort_values(by='actual_defect_density', ascending=False)
+                actual_worst_result_df = result_df.sort_values(by='actual_defect_density', ascending=True)
+                
+                # Cumulative LOC
+                result_df['cum_LOC'] = result_df['LOC'].cumsum()
+                actual_result_df['cum_LOC'] = actual_result_df['LOC'].cumsum()
+                actual_worst_result_df['cum_LOC'] = actual_worst_result_df['LOC'].cumsum()
+                
+                real_buggy_commits = result_df[result_df['label'] == 1]
+                
+                if len(real_buggy_commits) > 0:
+                    # Recall@20%Effort
+                    cum_LOC_20_percent = 0.2 * result_df.iloc[-1]['cum_LOC']
+                    buggy_line_20_percent = result_df[result_df['cum_LOC'] <= cum_LOC_20_percent]
+                    buggy_commit = buggy_line_20_percent[buggy_line_20_percent['label'] == 1]
+                    recall_20_percent_effort = len(buggy_commit) / float(len(real_buggy_commits))
+                    
+                    # Effort@20%Recall
+                    buggy_20_percent = real_buggy_commits.head(math.ceil(0.2 * len(real_buggy_commits)))
+                    if len(buggy_20_percent) > 0:
+                        buggy_20_percent_LOC = buggy_20_percent.iloc[-1]['cum_LOC']
+                        effort_at_20_percent_LOC_recall = int(buggy_20_percent_LOC) / float(result_df.iloc[-1]['cum_LOC'])
+                    else:
+                        effort_at_20_percent_LOC_recall = 0.0
+                    
+                    # P_opt calculation
+                    percent_effort_list = []
+                    predicted_recall_at_percent_effort_list = []
+                    actual_recall_at_percent_effort_list = []
+                    actual_worst_recall_at_percent_effort_list = []
+                    
+                    for percent_effort in np.arange(10, 101, 10):
+                        predicted_recall_k_percent_effort = get_recall_at_k_percent_effort(percent_effort, result_df, real_buggy_commits)
+                        actual_recall_k_percent_effort = get_recall_at_k_percent_effort(percent_effort, actual_result_df, real_buggy_commits)
+                        actual_worst_recall_k_percent_effort = get_recall_at_k_percent_effort(percent_effort, actual_worst_result_df, real_buggy_commits)
+                        
+                        percent_effort_list.append(percent_effort / 100)
+                        predicted_recall_at_percent_effort_list.append(predicted_recall_k_percent_effort)
+                        actual_recall_at_percent_effort_list.append(actual_recall_k_percent_effort)
+                        actual_worst_recall_at_percent_effort_list.append(actual_worst_recall_k_percent_effort)
+                    
+                    p_opt = 1 - ((auc(percent_effort_list, actual_recall_at_percent_effort_list) -
+                                  auc(percent_effort_list, predicted_recall_at_percent_effort_list)) /
+                                 (auc(percent_effort_list, actual_recall_at_percent_effort_list) -
+                                  auc(percent_effort_list, actual_worst_recall_at_percent_effort_list)))
+                    
+                    # Add effort-aware metrics
+                    metrics.update({
+                        'effort_at_20_percent_recall': round(effort_at_20_percent_LOC_recall, 4),
+                        'recall_at_20_percent_effort': round(recall_20_percent_effort, 4),
+                        'p_opt': round(p_opt, 4)
+                    })
+        except Exception as e:
+            logger.warning(f"Could not calculate effort-aware metrics: {e}")
+    
+    return metrics
+
 def evaluate(args, model, tokenizer,eval_when_training=False):
     # Loop to handle MNLI double evaluation (matched, mis-matched)
     eval_output_dir = args.output_dir
@@ -458,9 +610,21 @@ def evaluate(args, model, tokenizer,eval_when_training=False):
 
     if args.model_type in set(['codet5', 't5']):
         preds=logits[:,1]>0.5
+        proba_scores = logits[:,1]
     else:
         preds=logits[:,0]>0.5
-    eval_acc, eval_prec, eval_recall, eval_f1, eval_tnr, eval_fpr, eval_fnr = calculate_metrics(labels, preds)
+        proba_scores = logits[:,0]
+    
+    # Use comprehensive metrics
+    metrics = eval_metrics_comprehensive(labels, preds, proba_scores)
+    
+    # Keep backward compatibility with existing code
+    eval_acc = metrics['accuracy']
+    eval_prec = metrics['precision'] 
+    eval_recall = metrics['recall']
+    eval_f1 = metrics['f1_score']
+    eval_tnr, eval_fpr, eval_fnr = calculate_metrics(labels, preds)[4:7]  # Get the TNR, FPR, FNR from old function
+    
     eval_loss = eval_loss / nb_eval_steps
     perplexity = torch.tensor(eval_loss)
 
@@ -473,11 +637,17 @@ def evaluate(args, model, tokenizer,eval_when_training=False):
         "eval_tnr": eval_tnr,
         "eval_fpr": eval_fpr,
         "eval_fnr": eval_fnr,
+        "eval_roc_auc": metrics['roc_auc'],
+        "eval_pr_auc": metrics['pr_auc'],
+        "eval_mcc": metrics['mcc']
     }
+    
     gpu_mem = None
     if torch.cuda.is_available():
         gpu_mem = torch.cuda.max_memory_allocated(args.device) / (1024 ** 2)
-    wandb.log({
+    
+    # Log comprehensive metrics to wandb
+    wandb_metrics = {
         'valid/loss': float(perplexity),
         'valid/acc': eval_acc,
         'valid/prec': eval_prec,
@@ -486,8 +656,26 @@ def evaluate(args, model, tokenizer,eval_when_training=False):
         'valid/tnr': eval_tnr,
         'valid/fpr': eval_fpr,
         'valid/fnr': eval_fnr,
+        'valid/roc_auc': metrics['roc_auc'],
+        'valid/pr_auc': metrics['pr_auc'],
+        'valid/mcc': metrics['mcc'],
         'valid/gpu_ram_mb': gpu_mem
-    })
+    }
+    
+    # Add effort-aware metrics if available
+    if 'effort_at_20_percent_recall' in metrics:
+        result.update({
+            "eval_effort_at_20": metrics['effort_at_20_percent_recall'],
+            "eval_recall_at_20": metrics['recall_at_20_percent_effort'],
+            "eval_p_opt": metrics['p_opt']
+        })
+        wandb_metrics.update({
+            'valid/effort_at_20': metrics['effort_at_20_percent_recall'],
+            'valid/recall_at_20': metrics['recall_at_20_percent_effort'],
+            'valid/p_opt': metrics['p_opt']
+        })
+    
+    wandb.log(wandb_metrics)
     return result
 
 def test(args, model, tokenizer):
@@ -524,9 +712,12 @@ def test(args, model, tokenizer):
     if args.model_type in set(['codet5', 't5']):
         preds=logits[:,1]>0.5
         vuln_scores = logits[:,1].tolist()
+        proba_scores = logits[:,1]
     else:
         preds=logits[:,0]>0.5
         vuln_scores = logits[:,0].tolist()
+        proba_scores = logits[:,0]
+        
     os.makedirs(os.path.join(args.output_dir, args.project), exist_ok=True)
     # for the convenience of saving different testing results
     test_project = args.test_project if args.test_project else args.project
@@ -537,7 +728,18 @@ def test(args, model, tokenizer):
             else:
                 f.write(example.idx+f'\t0\t{vs}\n')  
 
-    test_acc, test_prec, test_recall, test_f1, test_tnr, test_fpr, test_fnr = calculate_metrics(labels, preds)
+    # Get example IDs for comprehensive metrics
+    example_ids = [example.idx for example in eval_dataset.examples]
+    
+    # Use comprehensive metrics
+    metrics = eval_metrics_comprehensive(labels, preds, proba_scores, ids=example_ids)
+    
+    # Keep backward compatibility
+    test_acc = metrics['accuracy']
+    test_prec = metrics['precision']
+    test_recall = metrics['recall'] 
+    test_f1 = metrics['f1_score']
+    test_tnr, test_fpr, test_fnr = calculate_metrics(labels, preds)[4:7]  # Get the TNR, FPR, FNR from old function
 
     result = {
         "test_acc": test_acc,
@@ -547,11 +749,17 @@ def test(args, model, tokenizer):
         "test_tnr": test_tnr,
         "test_fpr": test_fpr,
         "test_fnr": test_fnr,
+        "test_roc_auc": metrics['roc_auc'],
+        "test_pr_auc": metrics['pr_auc'],
+        "test_mcc": metrics['mcc']
     }
+    
     gpu_mem = None
     if torch.cuda.is_available():
         gpu_mem = torch.cuda.max_memory_allocated(args.device) / (1024 ** 2)
-    wandb.log({
+    
+    # Log comprehensive metrics to wandb
+    wandb_metrics = {
         'test/acc': test_acc,
         'test/prec': test_prec,
         'test/recall': test_recall,
@@ -559,8 +767,26 @@ def test(args, model, tokenizer):
         'test/tnr': test_tnr,
         'test/fpr': test_fpr,
         'test/fnr': test_fnr,
+        'test/roc_auc': metrics['roc_auc'],
+        'test/pr_auc': metrics['pr_auc'],
+        'test/mcc': metrics['mcc'],
         'test/gpu_ram_mb': gpu_mem
-    })
+    }
+    
+    # Add effort-aware metrics if available
+    if 'effort_at_20_percent_recall' in metrics:
+        result.update({
+            "test_effort_at_20": metrics['effort_at_20_percent_recall'],
+            "test_recall_at_20": metrics['recall_at_20_percent_effort'],
+            "test_p_opt": metrics['p_opt']
+        })
+        wandb_metrics.update({
+            'test/effort_at_20': metrics['effort_at_20_percent_recall'],
+            'test/recall_at_20': metrics['recall_at_20_percent_effort'],
+            'test/p_opt': metrics['p_opt']
+        })
+    
+    wandb.log(wandb_metrics)
     return result 
                         
 def main():
