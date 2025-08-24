@@ -71,20 +71,40 @@ def convert_examples_to_features(js,tokenizer,args):
     if not code.strip():
         code = "// empty code"
     
+    # Additional safety check - ensure code is a valid string
+    try:
+        code = str(code).strip()
+        if not code:
+            code = "// empty code"
+    except Exception as e:
+        print(f"Error converting code to string: {e}, using placeholder")
+        code = "// empty code"
+    
     if args.model_type in ["codegen"]:
         code_tokens = tokenizer.tokenize(code)
         if '</s>' in code_tokens:
             code_tokens = code_tokens[:code_tokens.index('</s>')]
         source_tokens = code_tokens[:args.block_size]
     elif args.model_type in ["starcoder"]:
-        code_tokens=tokenizer.tokenize(code)
-        source_tokens = code_tokens[:args.block_size]
+        try:
+            # Use encode instead of tokenize for StarCoder models to avoid issues
+            encoded = tokenizer.encode(code, add_special_tokens=False, max_length=args.block_size, truncation=True)
+            source_tokens = tokenizer.convert_ids_to_tokens(encoded)
+        except Exception as e:
+            print(f"Error tokenizing code: {e}")
+            print(f"Code type: {type(code)}, Code: {repr(code)}")
+            # Fallback to a simple approach
+            source_tokens = [tokenizer.unk_token] * min(10, args.block_size)
+        source_tokens = source_tokens[:args.block_size]
     else:
         code_tokens=tokenizer.tokenize(code)
         code_tokens = code_tokens[:args.block_size-2]
         source_tokens =[tokenizer.cls_token]+code_tokens+[tokenizer.sep_token]
     if args.model_type in ["codegen"]:
         source_ids = tokenizer.encode(code.split("</s>")[0], max_length=args.block_size, padding='max_length', truncation=True)
+    elif args.model_type in ["starcoder"]:
+        # For starcoder, we already have the encoded tokens from above
+        source_ids = tokenizer.encode(code, add_special_tokens=False, max_length=args.block_size, padding='max_length', truncation=True)
     else:
         source_ids =  tokenizer.convert_tokens_to_ids(source_tokens)
         padding_length = args.block_size - len(source_ids)
@@ -95,9 +115,19 @@ class TextDataset(Dataset):
     def __init__(self, tokenizer, args, file_path=None):
         self.examples = []
         with open(file_path) as f:
-            for line in f:
-                js=json.loads(line.strip())
-                self.examples.append(convert_examples_to_features(js,tokenizer,args))
+            for line_num, line in enumerate(f):
+                try:
+                    js=json.loads(line.strip())
+                    # Debug print for problematic entries
+                    if line_num < 5 or 'code_change' not in js or js['code_change'] is None:
+                        print(f"Line {line_num}: keys={list(js.keys())}, code_change type={type(js.get('code_change'))}")
+                        if 'code_change' in js:
+                            print(f"code_change value: {repr(js['code_change'])}")
+                    self.examples.append(convert_examples_to_features(js,tokenizer,args))
+                except Exception as e:
+                    print(f"Error processing line {line_num}: {e}")
+                    print(f"Line content: {line.strip()}")
+                    raise
 
 
     def __len__(self):
