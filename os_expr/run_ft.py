@@ -940,6 +940,8 @@ def main():
         torch.distributed.init_process_group(backend='nccl')
         args.n_gpu = 1
     args.device = device
+    # Ensure n_gpu is at least 1 to avoid division by zero
+    args.n_gpu = max(1, args.n_gpu)
     args.per_gpu_train_batch_size=args.train_batch_size//args.n_gpu
     args.per_gpu_eval_batch_size=args.eval_batch_size//args.n_gpu
     # Setup logging
