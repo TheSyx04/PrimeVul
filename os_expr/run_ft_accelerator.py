@@ -730,7 +730,17 @@ def main():
         model = model_class(config)
     
 
-    config.pad_token_id = tokenizer(tokenizer.pad_token, truncation=True)['input_ids'][0]
+    # Set up pad token properly for different model types
+    if args.model_type in ['codegen', 'starcoder']:
+        if tokenizer.pad_token is None:
+            # Use eos_token as pad_token if pad_token is not available
+            tokenizer.pad_token = tokenizer.eos_token
+            config.pad_token_id = tokenizer.eos_token_id
+        else:
+            config.pad_token_id = tokenizer.convert_tokens_to_ids(tokenizer.pad_token)
+    else:
+        config.pad_token_id = tokenizer(tokenizer.pad_token, truncation=True)['input_ids'][0]
+    
     if args.model_type in ['codegen', 'starcoder']:
         model = DecoderClassifier(model,config,tokenizer,args)
     else:
