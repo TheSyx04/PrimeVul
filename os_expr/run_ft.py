@@ -131,8 +131,11 @@ def set_seed(seed=42):
     torch.backends.cudnn.deterministic = True
 
 
-def train(args, train_dataset, model, tokenizer):
+def train(args, train_dataset, model, tokenizer, original_n_gpu=None):
     """ Train the model """ 
+    if original_n_gpu is None:
+        original_n_gpu = args.n_gpu
+        
     args.train_batch_size = args.per_gpu_train_batch_size * max(1, args.n_gpu)
     train_sampler = RandomSampler(train_dataset) if args.local_rank == -1 else DistributedSampler(train_dataset)
     
@@ -158,7 +161,7 @@ def train(args, train_dataset, model, tokenizer):
                                                 num_training_steps=args.max_steps)
 
     # multi-gpu training (should be after apex fp16 initialization)
-    if args.n_gpu > 1:
+    if original_n_gpu > 1:
         model = torch.nn.DataParallel(model)
 
     # Distributed training (should be after apex fp16 initialization)
@@ -223,7 +226,7 @@ def train(args, train_dataset, model, tokenizer):
             logits_lst.append(logits.detach().cpu().numpy())
             labels_lst.append(labels.detach().cpu().numpy())
 
-            if args.n_gpu > 1:
+            if original_n_gpu > 1:
                 loss = loss.mean()  # mean() to average on multi-gpu parallel training
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
@@ -281,7 +284,7 @@ def train(args, train_dataset, model, tokenizer):
                 valid_tnr = valid_fpr = valid_fnr = 0.0
                 
                 if args.local_rank == -1 and args.evaluate_during_training:  # Only evaluate when single GPU otherwise metrics may not average well
-                    results = evaluate(args, model, tokenizer,eval_when_training=True)
+                    results = evaluate(args, model, tokenizer,eval_when_training=True, original_n_gpu=original_n_gpu)
                     for key, value in results.items():
                         logger.info("  %s = %s", key, round(value,4))                    
                 
@@ -369,7 +372,7 @@ def train(args, train_dataset, model, tokenizer):
             valid_tnr = valid_fpr = valid_fnr = 0.0
             
             if args.local_rank == -1 and args.evaluate_during_training:  # Only evaluate when single GPU otherwise metrics may not average well
-                results = evaluate(args, model, tokenizer,eval_when_training=True)
+                results = evaluate(args, model, tokenizer,eval_when_training=True, original_n_gpu=original_n_gpu)
                 for key, value in results.items():
                     logger.info("  %s = %s", key, round(value,4))                    
                 
@@ -603,8 +606,11 @@ def eval_metrics_comprehensive(labels, preds, proba_scores, ids=None, has_loc=Fa
     
     return metrics
 
-def evaluate(args, model, tokenizer,eval_when_training=False):
+def evaluate(args, model, tokenizer,eval_when_training=False, original_n_gpu=None):
     # Loop to handle MNLI double evaluation (matched, mis-matched)
+    if original_n_gpu is None:
+        original_n_gpu = getattr(args, 'original_n_gpu', args.n_gpu)
+    
     eval_output_dir = args.output_dir
 
     eval_dataset = TextDataset(tokenizer, args,args.eval_data_file)
@@ -618,7 +624,7 @@ def evaluate(args, model, tokenizer,eval_when_training=False):
     eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size,num_workers=4,pin_memory=True)
 
     # multi-gpu evaluate
-    if args.n_gpu > 1 and eval_when_training is False:
+    if original_n_gpu > 1 and eval_when_training is False:
         model = torch.nn.DataParallel(model)
 
     # Eval!
@@ -712,8 +718,11 @@ def evaluate(args, model, tokenizer,eval_when_training=False):
     wandb.log(wandb_metrics)
     return result
 
-def test(args, model, tokenizer):
+def test(args, model, tokenizer, original_n_gpu=None):
     # Loop to handle MNLI double evaluation (matched, mis-matched)
+    if original_n_gpu is None:
+        original_n_gpu = getattr(args, 'original_n_gpu', args.n_gpu)
+        
     eval_dataset = TextDataset(tokenizer, args,args.test_data_file)
 
 
@@ -723,7 +732,7 @@ def test(args, model, tokenizer):
     eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
 
     # multi-gpu evaluate
-    if args.n_gpu > 1:
+    if original_n_gpu > 1:
         model = torch.nn.DataParallel(model)
 
     logger.info("***** Running Test *****")
@@ -945,9 +954,23 @@ def main():
         device = torch.device("cuda", args.local_rank)
         torch.distributed.init_process_group(backend='nccl')
         args.n_gpu = 1
+    
+    # Debug GPU detection
+    print(f"DEBUG: CUDA available: {torch.cuda.is_available()}")
+    print(f"DEBUG: CUDA device count: {torch.cuda.device_count()}")
+    print(f"DEBUG: args.no_cuda: {args.no_cuda}")
+    print(f"DEBUG: Selected device: {device}")
+    print(f"DEBUG: args.n_gpu before max(): {args.n_gpu}")
+    
     args.device = device
-    # Ensure n_gpu is at least 1 to avoid division by zero
+    # Ensure n_gpu is at least 1 to avoid division by zero, but keep original GPU count for logic
+    original_n_gpu = args.n_gpu
+    args.original_n_gpu = original_n_gpu  # Store for later use
     args.n_gpu = max(1, args.n_gpu)
+    
+    print(f"DEBUG: args.n_gpu after max(): {args.n_gpu}")
+    print(f"DEBUG: Will use GPU: {args.device.type == 'cuda' and original_n_gpu > 0}")
+    
     args.per_gpu_train_batch_size=args.train_batch_size//args.n_gpu
     args.per_gpu_eval_batch_size=args.eval_batch_size//args.n_gpu
     # Setup logging
@@ -1063,7 +1086,7 @@ def main():
         if args.local_rank == 0:
             torch.distributed.barrier()
 
-        train(args, train_dataset, model, tokenizer)
+        train(args, train_dataset, model, tokenizer, original_n_gpu)
 
 
 
@@ -1078,7 +1101,7 @@ def main():
             logger.warning(f"Failed to load model weights: {e}")
             model.load_state_dict(torch.load(output_dir, map_location='cpu'))
         model.to(args.device)
-        result=evaluate(args, model, tokenizer)
+        result=evaluate(args, model, tokenizer, original_n_gpu=args.original_n_gpu)
         results.update(result)
         logger.info("***** Eval results *****")
         for key in sorted(result.keys()):
@@ -1093,7 +1116,7 @@ def main():
             logger.warning(f"Failed to load model weights: {e}")
             model.load_state_dict(torch.load(output_dir, map_location='cpu'))
         model.to(args.device)
-        result=test(args, model, tokenizer)
+        result=test(args, model, tokenizer, original_n_gpu=args.original_n_gpu)
         results.update(result)
         logger.info("***** Test results *****")
         for key in sorted(result.keys()):
