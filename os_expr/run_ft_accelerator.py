@@ -59,7 +59,7 @@ class InputFeatures(object):
 
         
 def convert_examples_to_features(js,tokenizer,args):
-    code = js['func']
+    code = js['code_change']
     if args.model_type in ["codegen"]:
         code_tokens = tokenizer.tokenize(code)
         if '</s>' in code_tokens:
@@ -73,12 +73,12 @@ def convert_examples_to_features(js,tokenizer,args):
         code_tokens = code_tokens[:args.block_size-2]
         source_tokens =[tokenizer.cls_token]+code_tokens+[tokenizer.sep_token]
     if args.model_type in ["codegen"]:
-        source_ids = tokenizer.encode(js['func'].split("</s>")[0], max_length=args.block_size, padding='max_length', truncation=True)
+        source_ids = tokenizer.encode(code.split("</s>")[0], max_length=args.block_size, padding='max_length', truncation=True)
     else:
         source_ids =  tokenizer.convert_tokens_to_ids(source_tokens)
         padding_length = args.block_size - len(source_ids)
         source_ids+=[tokenizer.pad_token_id]*padding_length
-    return InputFeatures(source_tokens,source_ids,js['idx'],js['target'])
+    return InputFeatures(source_tokens,source_ids,js['commit_id'],js['label'])
 
 class TextDataset(Dataset):
     def __init__(self, tokenizer, args, file_path=None):
