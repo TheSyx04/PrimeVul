@@ -514,7 +514,7 @@ def eval_metrics_comprehensive(labels, preds, proba_scores, ids=None, has_loc=Fa
     
     # AUC metrics
     roc_auc = roc_auc_score(y_true=labels, y_score=proba_scores)
-    precisions, recalls, _ = precision_recall_curve(y_true=labels, probas_pred=proba_scores)
+    precisions, recalls, _ = precision_recall_curve(y_true=labels, y_score=proba_scores)
     pr_auc = auc(recalls, precisions)
     
     metrics = {
