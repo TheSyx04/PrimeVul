@@ -60,6 +60,17 @@ class InputFeatures(object):
         
 def convert_examples_to_features(js,tokenizer,args):
     code = js['code_change']
+    
+    # Handle None or non-string code
+    if code is None:
+        code = ""
+    elif not isinstance(code, str):
+        code = str(code)
+    
+    # Ensure code is not empty - if it is, use a placeholder
+    if not code.strip():
+        code = "// empty code"
+    
     if args.model_type in ["codegen"]:
         code_tokens = tokenizer.tokenize(code)
         if '</s>' in code_tokens:
