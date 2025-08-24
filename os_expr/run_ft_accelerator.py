@@ -8,6 +8,9 @@ import os
 os.environ["HF_ENDPOINT"] = "https://huggingface.co"
 # Set environment variable to help with flash attention compatibility
 os.environ["FLASH_ATTENTION_SKIP_CUDA_CHECK"] = "1"
+# Additional NCCL debugging and configuration
+os.environ["NCCL_DEBUG"] = "INFO"
+os.environ["NCCL_TIMEOUT"] = "1800"
 
 import math
 
@@ -674,6 +677,11 @@ def main():
 
     args = parser.parse_args()
 
+    # Set CUDA device visibility to help with distributed training
+    import os
+    if 'LOCAL_RANK' in os.environ:
+        local_rank = int(os.environ['LOCAL_RANK'])
+        os.environ['CUDA_VISIBLE_DEVICES'] = str(local_rank)
 
     accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps) 
     device = accelerator.device
