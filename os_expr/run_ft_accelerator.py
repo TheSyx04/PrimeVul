@@ -76,6 +76,14 @@ def convert_examples_to_features(js,tokenizer,args):
         code = str(code).strip()
         if not code:
             code = "// empty code"
+        
+        # Clean up problematic Unicode escape sequences that can cause tokenizer issues
+        import re
+        # Replace problematic Unicode escape sequences with placeholders
+        code = re.sub(r'\\ud[c-f][0-9a-f]{2}', '?', code, flags=re.IGNORECASE)
+        # Also handle any other escape sequences that might cause issues
+        code = code.encode('utf-8', errors='ignore').decode('utf-8', errors='ignore')
+        
     except Exception as e:
         print(f"Error converting code to string: {e}, using placeholder")
         code = "// empty code"
@@ -91,8 +99,7 @@ def convert_examples_to_features(js,tokenizer,args):
             encoded = tokenizer.encode(code, add_special_tokens=False, max_length=args.block_size, truncation=True)
             source_tokens = tokenizer.convert_ids_to_tokens(encoded)
         except Exception as e:
-            print(f"Error tokenizing code: {e}")
-            print(f"Code type: {type(code)}, Code: {repr(code)}")
+            print(f"Error tokenizing code at line: {e}")
             # Fallback to a simple approach
             source_tokens = [tokenizer.unk_token] * min(10, args.block_size)
         source_tokens = source_tokens[:args.block_size]
@@ -118,15 +125,13 @@ class TextDataset(Dataset):
             for line_num, line in enumerate(f):
                 try:
                     js=json.loads(line.strip())
-                    # Debug print for problematic entries
-                    if line_num < 5 or 'code_change' not in js or js['code_change'] is None:
-                        print(f"Line {line_num}: keys={list(js.keys())}, code_change type={type(js.get('code_change'))}")
-                        if 'code_change' in js:
-                            print(f"code_change value: {repr(js['code_change'])}")
+                    # Debug print only for the first few entries or problematic ones
+                    if line_num < 3:
+                        print(f"Line {line_num}: Processing entry with commit_id={js.get('commit_id', 'N/A')}")
                     self.examples.append(convert_examples_to_features(js,tokenizer,args))
                 except Exception as e:
                     print(f"Error processing line {line_num}: {e}")
-                    print(f"Line content: {line.strip()}")
+                    print(f"Line content: {line.strip()[:200]}...")  # Truncate long lines
                     raise
 
 
