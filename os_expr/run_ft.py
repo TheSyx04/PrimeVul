@@ -124,7 +124,7 @@ class TextDataset(Dataset):
 
 def set_seed(seed=42):
     random.seed(seed)
-    os.environ['PYHTONHASHSEED'] = str(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
@@ -190,8 +190,7 @@ def train(args, train_dataset, model, tokenizer):
     best_f1=0.0
     best_acc=0.0
     patience = 0
-    wandb.login(key="fb5a5b79b5aafdb17cb882dd76ac2e0cde9adf8d")
-    wandb.init(project=args.project, name=args.model_dir, config=vars(args))
+    # wandb will be initialized in main() function
     model.zero_grad()
     train_start_time = time.time()
  
@@ -270,11 +269,25 @@ def train(args, train_dataset, model, tokenizer):
                 train_recall = train_metrics['recall']
                 train_f1 = train_metrics['f1_score']
                 train_tnr, train_fpr, train_fnr = calculate_metrics(step_labels_lst, step_preds_lst)[4:7]
+                
+                # Initialize default validation values
+                valid_loss = valid_acc = valid_prec = valid_recall = valid_f1 = 0.0
+                valid_tnr = valid_fpr = valid_fnr = 0.0
+                
                 if args.local_rank == -1 and args.evaluate_during_training:  # Only evaluate when single GPU otherwise metrics may not average well
                     results = evaluate(args, model, tokenizer,eval_when_training=True)
                     for key, value in results.items():
                         logger.info("  %s = %s", key, round(value,4))                    
-                valid_loss, valid_acc, valid_prec, valid_recall, valid_f1, valid_tnr, valid_fpr, valid_fnr = results.values()
+                
+                    # Extract needed values for backward compatibility
+                    valid_loss = results.get('eval_loss', 0.0)
+                    valid_acc = results.get('eval_acc', 0.0)
+                    valid_prec = results.get('eval_prec', 0.0)
+                    valid_recall = results.get('eval_recall', 0.0)
+                    valid_f1 = results.get('eval_f1', 0.0)
+                    valid_tnr = results.get('eval_tnr', 0.0)
+                    valid_fpr = results.get('eval_fpr', 0.0)
+                    valid_fnr = results.get('eval_fnr', 0.0)
                 wandb.log({
                     'train/loss': avg_loss,
                     'valid/loss': valid_loss,
@@ -302,7 +315,7 @@ def train(args, train_dataset, model, tokenizer):
 
                 
                 # Save model checkpoint    
-                if results['eval_f1']>best_f1:
+                if args.local_rank == -1 and args.evaluate_during_training and 'results' in locals() and results['eval_f1']>best_f1:
                     best_f1=results['eval_f1']
                     logger.info("  "+"*"*20)  
                     logger.info("  Best f1:%s",round(best_f1,4))
@@ -344,11 +357,25 @@ def train(args, train_dataset, model, tokenizer):
             gpu_mem = None
             if torch.cuda.is_available():
                 gpu_mem = torch.cuda.max_memory_allocated(args.device) / (1024 ** 2)
+            
+            # Initialize default values
+            valid_loss = valid_acc = valid_prec = valid_recall = valid_f1 = 0.0
+            valid_tnr = valid_fpr = valid_fnr = 0.0
+            
             if args.local_rank == -1 and args.evaluate_during_training:  # Only evaluate when single GPU otherwise metrics may not average well
                 results = evaluate(args, model, tokenizer,eval_when_training=True)
                 for key, value in results.items():
                     logger.info("  %s = %s", key, round(value,4))                    
-            valid_loss, valid_acc, valid_prec, valid_recall, valid_f1, valid_tnr, valid_fpr, valid_fnr = results.values()
+                
+                # Extract needed values for backward compatibility
+                valid_loss = results.get('eval_loss', 0.0)
+                valid_acc = results.get('eval_acc', 0.0)
+                valid_prec = results.get('eval_prec', 0.0)
+                valid_recall = results.get('eval_recall', 0.0)
+                valid_f1 = results.get('eval_f1', 0.0)
+                valid_tnr = results.get('eval_tnr', 0.0)
+                valid_fpr = results.get('eval_fpr', 0.0)
+                valid_fnr = results.get('eval_fnr', 0.0)
             wandb.log({
                 'train/loss': avg_loss,
                 'valid/loss': valid_loss,
@@ -386,7 +413,7 @@ def train(args, train_dataset, model, tokenizer):
                 logger.info(f"ACSAC: Saving model checkpoint at epoch {idx} to {output_dir}")
             
             # Save model checkpoint    
-            if results['eval_f1']>best_f1:
+            if args.local_rank == -1 and args.evaluate_during_training and 'results' in locals() and results['eval_f1']>best_f1:
                 best_f1=results['eval_f1']
                 logger.info("  "+"*"*20)  
                 logger.info("  Best f1:%s",round(best_f1,4))
@@ -404,7 +431,7 @@ def train(args, train_dataset, model, tokenizer):
             else:
                 patience += 1
 
-            if results['eval_acc']>best_acc:
+            if args.local_rank == -1 and args.evaluate_during_training and 'results' in locals() and results['eval_acc']>best_acc:
                 best_acc=results['eval_acc']
                 logger.info("  "+"*"*20)
                 logger.info("  Best acc:%s",round(best_acc,4))
@@ -436,13 +463,13 @@ def train(args, train_dataset, model, tokenizer):
 
 def calculate_metrics(labels, preds):
     acc=accuracy_score(labels, preds)
-    prec = precision_score(labels, preds)
-    recall = recall_score(labels, preds)
-    f1 = f1_score(labels, preds)
+    prec = precision_score(labels, preds, zero_division=0)
+    recall = recall_score(labels, preds, zero_division=0)
+    f1 = f1_score(labels, preds, zero_division=0)
     TN, FP, FN, TP = confusion_matrix(labels, preds).ravel()
-    tnr = TN/(TN+FP)
-    fpr = FP/(FP+TN)
-    fnr = FN/(TP+FN)
+    tnr = TN/(TN+FP) if (TN+FP) > 0 else 0.0
+    fpr = FP/(FP+TN) if (FP+TN) > 0 else 0.0
+    fnr = FN/(TP+FN) if (TP+FN) > 0 else 0.0
     return round(acc,4)*100, round(prec,4)*100, \
         round(recall,4)*100, round(f1,4)*100, round(tnr,4)*100, \
             round(fpr,4)*100, round(fnr,4)*100
@@ -471,9 +498,9 @@ def eval_metrics_comprehensive(labels, preds, proba_scores, ids=None, has_loc=Fa
     """
     # Basic metrics
     acc = accuracy_score(y_true=labels, y_pred=preds)
-    f1 = f1_score(y_true=labels, y_pred=preds)
-    prc = precision_score(y_true=labels, y_pred=preds)
-    rc = recall_score(y_true=labels, y_pred=preds)
+    f1 = f1_score(y_true=labels, y_pred=preds, zero_division=0)
+    prc = precision_score(y_true=labels, y_pred=preds, zero_division=0)
+    rc = recall_score(y_true=labels, y_pred=preds, zero_division=0)
     mcc = matthews_corrcoef(y_true=labels, y_pred=preds)
     
     # AUC metrics
@@ -892,14 +919,15 @@ def main():
                              "See details at https://nvidia.github.io/apex/amp.html")
     parser.add_argument("--local_rank", type=int, default=-1,
                         help="For distributed training: local_rank")
-    parser.add_argument('--max-patience', type=int, default=-1, help="Max iterations for model with no improvement.")
+    parser.add_argument('--max_patience', type=int, default=-1, help="Max iterations for model with no improvement.")
 
     
 
     args = parser.parse_args()
 
     # Initialize wandb for all modes
-    wandb.login(key="fb5a5b79b5aafdb17cb882dd76ac2e0cde9adf8d")
+    import os
+    os.environ["WANDB_API_KEY"] = "fb5a5b79b5aafdb17cb882dd76ac2e0cde9adf8d"
     wandb.init(project=args.project, name=args.model_dir, config=vars(args))
 
     # Setup CUDA, GPU & distributed training
@@ -962,8 +990,19 @@ def main():
         tokenizer.pad_token = (tokenizer.eos_token)
         tokenizer.pad_token_id = tokenizer(tokenizer.pad_token, truncation=True)['input_ids'][0]
     if args.block_size <= 0:
-        args.block_size = tokenizer.max_len_single_sentence  # Our input block size will be the max possible for the model
-    args.block_size = min(args.block_size, tokenizer.max_len_single_sentence)
+        # Handle different tokenizer attribute names for compatibility
+        if hasattr(tokenizer, 'model_max_length'):
+            args.block_size = tokenizer.model_max_length
+        elif hasattr(tokenizer, 'max_len_single_sentence'):
+            args.block_size = tokenizer.max_len_single_sentence
+        else:
+            args.block_size = 512  # fallback default
+    
+    # Ensure block_size doesn't exceed tokenizer limits
+    if hasattr(tokenizer, 'model_max_length'):
+        args.block_size = min(args.block_size, tokenizer.model_max_length)
+    elif hasattr(tokenizer, 'max_len_single_sentence'):
+        args.block_size = min(args.block_size, tokenizer.max_len_single_sentence)
 
     if args.model_name_or_path:
         model = model_class.from_pretrained(args.model_name_or_path,
@@ -1002,7 +1041,6 @@ def main():
 
 
     # Evaluation
-
     results = {}
     if args.do_eval and args.local_rank in [-1, 0]:
         checkpoint_prefix = f'checkpoint-best-f1/{args.project}/{args.model_dir}/model.bin'
@@ -1010,6 +1048,7 @@ def main():
         model.load_state_dict(torch.load(output_dir))      
         model.to(args.device)
         result=evaluate(args, model, tokenizer)
+        results.update(result)
         logger.info("***** Eval results *****")
         for key in sorted(result.keys()):
             logger.info("  %s = %s", key, str(round(result[key],4)))
@@ -1020,6 +1059,7 @@ def main():
         model.load_state_dict(torch.load(output_dir))                  
         model.to(args.device)
         result=test(args, model, tokenizer)
+        results.update(result)
         logger.info("***** Test results *****")
         for key in sorted(result.keys()):
             logger.info("  %s = %s", key, str(round(result[key],4)))
