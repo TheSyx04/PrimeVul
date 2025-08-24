@@ -1007,6 +1007,21 @@ def main():
         logger.info("reload model from {}, resume from {} epoch".format(checkpoint_last, args.start_epoch))
 
     config_class, model_class, tokenizer_class = MODEL_CLASSES[args.model_type]
+    
+    # Auto-detect model type if using CodeBERT or similar RoBERTa-based models
+    if args.model_name_or_path and ('codebert' in args.model_name_or_path.lower() or 'roberta' in args.model_name_or_path.lower()):
+        if args.model_type == 'bert':
+            print(f"DEBUG: Auto-correcting model_type from 'bert' to 'roberta' for model: {args.model_name_or_path}")
+            args.model_type = 'roberta'
+            config_class, model_class, tokenizer_class = MODEL_CLASSES[args.model_type]
+    
+    print(f"DEBUG: args.model_type: {args.model_type}")
+    print(f"DEBUG: config_class: {config_class}")
+    print(f"DEBUG: model_class: {model_class}")
+    print(f"DEBUG: tokenizer_class: {tokenizer_class}")
+    print(f"DEBUG: args.model_name_or_path: {args.model_name_or_path}")
+    print(f"DEBUG: args.tokenizer_name: '{args.tokenizer_name}'")
+    
     config = config_class.from_pretrained(args.config_name if args.config_name else args.model_name_or_path,
                                           cache_dir=args.cache_dir if args.cache_dir else None)
 
@@ -1014,7 +1029,7 @@ def main():
         config.num_labels = 1
     else:
         config.num_labels = 2
-    tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name,
+    tokenizer = tokenizer_class.from_pretrained(args.tokenizer_name if args.tokenizer_name else args.model_name_or_path,
                                                 do_lower_case=args.do_lower_case,
                                                 cache_dir=args.cache_dir if args.cache_dir else None)
     if tokenizer.pad_token == None:
