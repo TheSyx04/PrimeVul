@@ -11,6 +11,11 @@ os.environ["FLASH_ATTENTION_SKIP_CUDA_CHECK"] = "1"
 # Additional NCCL debugging and configuration
 os.environ["NCCL_DEBUG"] = "INFO"
 os.environ["NCCL_TIMEOUT"] = "1800"
+# Reduce distributed training timeout issues
+os.environ["TORCH_DISTRIBUTED_DETAIL"] = "DEBUG"
+os.environ["NCCL_BLOCKING_WAIT"] = "1"
+# Set shorter timeout for quicker failure detection
+os.environ["TORCH_NCCL_ASYNC_ERROR_HANDLING"] = "1"
 
 import math
 
@@ -672,6 +677,8 @@ def main():
     parser.add_argument("--local_rank", type=int, default=-1,
                         help="For distributed training: local_rank")
     parser.add_argument('--max-patience', type=int, default=-1, help="Max iterations for model with no improvement.")
+    parser.add_argument('--force_single_gpu', action='store_true',
+                        help="Force single GPU mode, disable distributed training")
 
     
 
@@ -679,16 +686,40 @@ def main():
 
     # Set CUDA device visibility to help with distributed training
     import os
-    if 'LOCAL_RANK' in os.environ:
+    if 'LOCAL_RANK' in os.environ and not args.force_single_gpu:
         local_rank = int(os.environ['LOCAL_RANK'])
         os.environ['CUDA_VISIBLE_DEVICES'] = str(local_rank)
 
-    accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps) 
-    device = accelerator.device
-    args.n_gpu = accelerator.num_processes
-    args.device = device
-    args.per_gpu_train_batch_size=args.train_batch_size 
-    args.per_gpu_eval_batch_size=args.eval_batch_size // args.n_gpu
+    if args.force_single_gpu:
+        print("Forcing single GPU mode...")
+        accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps,
+                                cpu=args.no_cuda)
+        device = accelerator.device
+        args.n_gpu = 1
+        args.device = device
+        args.per_gpu_train_batch_size=args.train_batch_size 
+        args.per_gpu_eval_batch_size=args.eval_batch_size
+    else:
+        try:
+            accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps) 
+            device = accelerator.device
+            args.n_gpu = accelerator.num_processes
+            args.device = device
+            args.per_gpu_train_batch_size=args.train_batch_size 
+            args.per_gpu_eval_batch_size=args.eval_batch_size // max(1, args.n_gpu)
+        except Exception as e:
+            # Fallback to single GPU/CPU mode if distributed setup fails
+            print(f"Distributed training setup failed: {e}")
+            print("Falling back to single GPU/CPU mode...")
+            
+            # Create a basic accelerator without distributed training
+            accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps,
+                                    cpu=args.no_cuda)
+            device = accelerator.device
+            args.n_gpu = 1
+            args.device = device
+            args.per_gpu_train_batch_size=args.train_batch_size 
+            args.per_gpu_eval_batch_size=args.eval_batch_size
     # Setup logging
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                         datefmt='%m/%d/%Y %H:%M:%S',
