@@ -692,8 +692,15 @@ def main():
 
     if args.force_single_gpu:
         print("Forcing single GPU mode...")
+        # Clear distributed environment variables to ensure single process
+        import os
+        for key in ['WORLD_SIZE', 'RANK', 'LOCAL_RANK', 'MASTER_ADDR', 'MASTER_PORT']:
+            if key in os.environ:
+                del os.environ[key]
+        
         accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps,
-                                cpu=args.no_cuda)
+                                cpu=args.no_cuda,
+                                project_dir=".")
         device = accelerator.device
         args.n_gpu = 1
         args.device = device
@@ -713,8 +720,15 @@ def main():
             print("Falling back to single GPU/CPU mode...")
             
             # Create a basic accelerator without distributed training
+            # Force single process by clearing distributed environment variables
+            import os
+            for key in ['WORLD_SIZE', 'RANK', 'LOCAL_RANK', 'MASTER_ADDR', 'MASTER_PORT']:
+                if key in os.environ:
+                    del os.environ[key]
+            
             accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps,
-                                    cpu=args.no_cuda)
+                                    cpu=args.no_cuda,
+                                    project_dir=".")
             device = accelerator.device
             args.n_gpu = 1
             args.device = device
