@@ -758,9 +758,12 @@ def main():
     logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
                         datefmt='%m/%d/%Y %H:%M:%S',
                         level=logging.INFO if args.local_rank in [-1, 0] else logging.WARN)
-    logger.warning("device: %s, n_gpu: %s, distributed training: %s",
-                   device, args.n_gpu, bool(args.n_gpu > 1))
-    logger.info(accelerator.state, main_process_only=False)
+    
+    # Only log from main process to avoid duplicate messages
+    if accelerator.is_main_process:
+        logger.warning("device: %s, n_gpu: %s, distributed training: %s",
+                       device, args.n_gpu, bool(args.n_gpu > 1))
+        logger.info(accelerator.state, main_process_only=False)
 
     # Set seed
     set_seed(args.seed)
@@ -865,7 +868,9 @@ def main():
     else:
         model = Model(model,config,tokenizer,args)
 
-    logger.info("Training/evaluation parameters %s", args)
+    # Only log from main process to avoid duplicate messages
+    if accelerator.is_main_process:
+        logger.info("Training/evaluation parameters %s", args)
 
     # Training
     if args.do_train:
