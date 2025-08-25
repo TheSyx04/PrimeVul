@@ -135,14 +135,14 @@ def convert_examples_to_features(js,tokenizer,args):
     return InputFeatures(source_tokens,source_ids,js['commit_id'],js['label'])
 
 class TextDataset(Dataset):
-    def __init__(self, tokenizer, args, file_path=None):
+    def __init__(self, tokenizer, args, file_path=None, verbose=True):
         self.examples = []
         with open(file_path) as f:
             for line_num, line in enumerate(f):
                 try:
                     js=json.loads(line.strip())
-                    # Debug print only for the first few entries or problematic ones
-                    if line_num < 3:
+                    # Debug print only for the first few entries and only if verbose
+                    if line_num < 3 and verbose:
                         print(f"Line {line_num}: Processing entry with commit_id={js.get('commit_id', 'N/A')}")
                     self.examples.append(convert_examples_to_features(js,tokenizer,args))
                 except Exception as e:
@@ -462,7 +462,7 @@ def analyze_predictions(predictions_path, data_path):
 
 def test(args, accelerator, model, tokenizer):
     # Loop to handle MNLI double evaluation (matched, mis-matched)
-    eval_dataset = TextDataset(tokenizer, args, args.test_data_file)
+    eval_dataset = TextDataset(tokenizer, args, args.test_data_file, verbose=False)
     args.eval_batch_size = args.per_gpu_eval_batch_size * max(1, args.n_gpu)
     eval_dataloader = DataLoader(eval_dataset, shuffle=False, batch_size=args.eval_batch_size)
 
@@ -532,7 +532,7 @@ def test(args, accelerator, model, tokenizer):
     return result 
     
 def test_prob(args, model, tokenizer):
-    eval_dataset = TextDataset(tokenizer, args,args.test_data_file)
+    eval_dataset = TextDataset(tokenizer, args, args.test_data_file, verbose=False)
 
     args.eval_batch_size = args.per_gpu_eval_batch_size * max(1, args.n_gpu)
     # Note that DistributedSampler samples randomly
@@ -827,8 +827,9 @@ def main():
                                                     attn_implementation = "flash_attention_2")
             except (ImportError, ModuleNotFoundError, RuntimeError, Exception) as e:
                 # More comprehensive exception handling for flash attention issues
-                logger.warning(f"flash_attn import/initialization failed ({type(e).__name__}: {e}), falling back to eager attention")
-                logger.info("This might be due to Python 3.13 compatibility issues with flash-attn")
+                if accelerator.is_main_process:
+                    logger.warning(f"flash_attn import/initialization failed ({type(e).__name__}: {e}), falling back to eager attention")
+                    logger.info("This might be due to Python 3.13 compatibility issues with flash-attn")
                 
                 try:
                     # Explicitly set eager attention in config
@@ -841,7 +842,8 @@ def main():
                                                         attn_implementation = "eager")
                 except Exception as e2:
                     # Final fallback without specifying attention implementation
-                    logger.warning(f"Eager attention also failed ({type(e2).__name__}: {e2}), using default attention")
+                    if accelerator.is_main_process:
+                        logger.warning(f"Eager attention also failed ({type(e2).__name__}: {e2}), using default attention")
                     model = model_class.from_pretrained(args.model_name_or_path,
                                                         config=config,
                                                         torch_dtype = torch.bfloat16)
@@ -874,9 +876,15 @@ def main():
 
     # Training
     if args.do_train:
-        with accelerator.main_process_first():
-            train_dataset = TextDataset(tokenizer, args, args.train_data_file)
-            eval_dataset = TextDataset(tokenizer, args, args.eval_data_file)
+        # For single GPU mode, we don't need main_process_first wrapper
+        is_main = accelerator.is_main_process
+        if args.n_gpu == 1:
+            train_dataset = TextDataset(tokenizer, args, args.train_data_file, verbose=is_main)
+            eval_dataset = TextDataset(tokenizer, args, args.eval_data_file, verbose=is_main)
+        else:
+            with accelerator.main_process_first():
+                train_dataset = TextDataset(tokenizer, args, args.train_data_file, verbose=is_main)
+                eval_dataset = TextDataset(tokenizer, args, args.eval_data_file, verbose=is_main)
 
         train(args, accelerator, train_dataset, eval_dataset, model, tokenizer)
 
