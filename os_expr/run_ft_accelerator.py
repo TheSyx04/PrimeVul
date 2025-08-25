@@ -5,6 +5,14 @@ from __future__ import absolute_import, division, print_function
 import argparse
 import logging
 import os
+
+# Force single GPU mode by clearing distributed environment variables at startup
+print("Forcing single GPU mode - clearing distributed environment variables...")
+for key in ['WORLD_SIZE', 'RANK', 'LOCAL_RANK', 'MASTER_ADDR', 'MASTER_PORT']:
+    if key in os.environ:
+        print(f"Removing {key}={os.environ[key]}")
+        del os.environ[key]
+
 os.environ["HF_ENDPOINT"] = "https://huggingface.co"
 # Set environment variable to help with flash attention compatibility
 os.environ["FLASH_ATTENTION_SKIP_CUDA_CHECK"] = "1"
@@ -708,12 +716,24 @@ def main():
         args.per_gpu_eval_batch_size=args.eval_batch_size
     else:
         try:
-            accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps) 
+            # Force single GPU by explicitly setting CPU mode for multi-process detection
+            print("Attempting to initialize Accelerator in single GPU mode...")
+            accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps,
+                                    mixed_precision='bf16',
+                                    cpu=False) 
             device = accelerator.device
-            args.n_gpu = accelerator.num_processes
+            print(f"Accelerator initialized with {accelerator.num_processes} processes")
+            # Force single GPU regardless of accelerator.num_processes
+            args.n_gpu = 1
             args.device = device
             args.per_gpu_train_batch_size=args.train_batch_size 
-            args.per_gpu_eval_batch_size=args.eval_batch_size // max(1, args.n_gpu)
+            args.per_gpu_eval_batch_size=args.eval_batch_size
+            
+            # If we still have multiple processes, force single mode
+            if accelerator.num_processes > 1:
+                print(f"Warning: Accelerator detected {accelerator.num_processes} processes, but forcing single GPU mode")
+                print("If you see CUDA OOM errors, this means distributed training is still active")
+                print("Consider using --force_single_gpu flag or running without accelerate launch")
         except Exception as e:
             # Fallback to single GPU/CPU mode if distributed setup fails
             print(f"Distributed training setup failed: {e}")
