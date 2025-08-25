@@ -40,10 +40,16 @@ import multiprocessing
 from model import Model, DecoderClassifier
 
 cpu_cont = multiprocessing.cpu_count()
-from transformers import (WEIGHTS_NAME, AdamW, get_linear_schedule_with_warmup,
+from transformers import (WEIGHTS_NAME, get_linear_schedule_with_warmup,
                           LlamaConfig, LlamaModel, LlamaTokenizer,
                           Starcoder2Config, Starcoder2Model, AutoTokenizer,
                           )
+
+# Import AdamW from torch.optim (newer versions) or transformers (older versions)
+try:
+    from torch.optim import AdamW
+except ImportError:
+    from transformers import AdamW
 
 from accelerate import Accelerator
 from accelerate.logging import get_logger
