@@ -55,6 +55,7 @@ except ImportError:
 from accelerate import Accelerator
 from accelerate.logging import get_logger
 from accelerate.utils import set_seed
+import wandb
 
 import os
 
@@ -256,7 +257,15 @@ def train(args, accelerator, train_dataset, eval_dataset, model, tokenizer):
                 if args.evaluate_during_training:  # Only evaluate when single GPU otherwise metrics may not average well
                     results = evaluate(args, accelerator, eval_dataloader, eval_dataset, model, tokenizer, eval_when_training=True)
                     for key, value in results.items():
-                        logger.info("  %s = %s", key, round(value, 4))                    
+                        logger.info("  %s = %s", key, round(value, 4))
+                    
+                    # Log to wandb at step 0
+                    if args.use_wandb and accelerator.is_main_process:
+                        step_wandb_log = {"step": step, "train/loss": avg_loss}
+                        for key, value in results.items():
+                            wandb_key = key.replace("eval_", "eval/")
+                            step_wandb_log[wandb_key] = value
+                        wandb.log(step_wandb_log, step=step)                    
             
             ###
             # log after every logging_steps (e.g., 1000)
@@ -267,7 +276,15 @@ def train(args, accelerator, train_dataset, eval_dataset, model, tokenizer):
                 if args.evaluate_during_training:  # Only evaluate when single GPU otherwise metrics may not average well
                     results = evaluate(args, accelerator, eval_dataloader, eval_dataset, model, tokenizer,eval_when_training=True)
                     for key, value in results.items():
-                        logger.info("  %s = %s", key, round(value,4))                    
+                        logger.info("  %s = %s", key, round(value,4))
+                    
+                    # Log to wandb at logging steps
+                    if args.use_wandb and accelerator.is_main_process:
+                        step_wandb_log = {"step": step, "train/loss": avg_loss}
+                        for key, value in results.items():
+                            wandb_key = key.replace("eval_", "eval/")
+                            step_wandb_log[wandb_key] = value
+                        wandb.log(step_wandb_log, step=step)                    
                 
                 # Save model checkpoint    
                 if results['eval_f1']>best_f1:
@@ -292,13 +309,52 @@ def train(args, accelerator, train_dataset, eval_dataset, model, tokenizer):
         avg_loss=round(train_loss/tr_num,5)
         logits_lst=np.concatenate(logits_lst,0)
         labels_lst=np.concatenate(labels_lst,0)
-        # train_acc, train_prec, train_recall, train_f1, train_tnr, train_fpr, train_fnr = calculate_metrics(labels_lst, preds_lst)
+        
+        # Calculate train metrics
+        if args.model_type in set(['codegen', 'starcoder']):
+            train_preds = logits_lst[:,1] > 0.5
+            train_probs = logits_lst[:,1]
+        else:
+            train_preds = logits_lst[:,0] > 0.5
+            train_probs = logits_lst[:,0]
+        
+        # Calculate enhanced train metrics
+        train_metrics_result = calculate_metrics(labels_lst, train_preds, train_probs)
+        if len(train_metrics_result) == 10:  # Enhanced metrics with AUC
+            train_acc, train_prec, train_recall, train_f1, train_tnr, train_fpr, train_fnr, train_mcc, train_roc_auc, train_pr_auc = train_metrics_result
+        else:  # Fallback to basic metrics
+            train_acc, train_prec, train_recall, train_f1, train_tnr, train_fpr, train_fnr, train_mcc = train_metrics_result
+            train_roc_auc = 0.0
+            train_pr_auc = 0.0
         
         if args.local_rank in [-1, 0]:
+            # Log to wandb at epoch level
+            if args.use_wandb and accelerator.is_main_process:
+                wandb_log = {
+                    "epoch": idx,
+                    "train/loss": avg_loss,
+                    "train/accuracy": train_acc,
+                    "train/precision": train_prec,
+                    "train/recall": train_recall,
+                    "train/f1": train_f1,
+                    "train/tnr": train_tnr,
+                    "train/fpr": train_fpr,
+                    "train/fnr": train_fnr,
+                    "train/mcc": train_mcc,
+                    "train/roc_auc": train_roc_auc,
+                    "train/pr_auc": train_pr_auc,
+                }
+                
             if args.evaluate_during_training:  # Only evaluate when single GPU otherwise metrics may not average well
                 results = evaluate(args, accelerator, eval_dataloader, eval_dataset, model, tokenizer,eval_when_training=True)
                 for key, value in results.items():
-                    logger.info("  %s = %s", key, round(value,4))                    
+                    logger.info("  %s = %s", key, round(value,4))
+                
+                # Add evaluation metrics to wandb log
+                if args.use_wandb and accelerator.is_main_process:
+                    for key, value in results.items():
+                        wandb_key = key.replace("eval_", "eval/")
+                        wandb_log[wandb_key] = value                    
             
             # save model checkpoint at ep10
             if idx == 9:
@@ -341,6 +397,16 @@ def train(args, accelerator, train_dataset, eval_dataset, model, tokenizer):
                 patience = 0
             else:
                 patience += 1
+            
+            # Log to wandb at the end of epoch
+            if args.use_wandb and accelerator.is_main_process:
+                wandb_log.update({
+                    "best_f1": best_f1,
+                    "best_acc": best_acc,
+                    "patience": patience,
+                })
+                wandb.log(wandb_log, step=step)
+        
         if patience == args.max_patience:
             logger.info(f"Reached max patience {args.max_patience}. End training now.")
             if best_f1 == 0.0:
@@ -359,7 +425,15 @@ def train(args, accelerator, train_dataset, eval_dataset, model, tokenizer):
         result = test(args, accelerator, model, tokenizer) 
         logger.info("***** Test results *****")
         for key in sorted(result.keys()):
-            logger.info("  %s = %s", key, str(round(result[key],4)))              
+            logger.info("  %s = %s", key, str(round(result[key],4)))
+        
+        # Log test results to wandb
+        if args.use_wandb and accelerator.is_main_process:
+            test_wandb_log = {}
+            for key, value in result.items():
+                wandb_key = key.replace("test_", "test/")
+                test_wandb_log[wandb_key] = value
+            wandb.log(test_wandb_log)              
 
 def calculate_metrics(labels, preds, probs=None):
     acc=accuracy_score(labels, preds)
@@ -848,6 +922,18 @@ def main():
     parser.add_argument('--max-patience', type=int, default=-1, help="Max iterations for model with no improvement.")
     parser.add_argument('--force_single_gpu', action='store_true',
                         help="Force single GPU mode, disable distributed training")
+    
+    # Wandb arguments
+    parser.add_argument('--use_wandb', action='store_true',
+                        help="Use Weights & Biases for logging")
+    parser.add_argument('--wandb_project', type=str, default="primevul-training",
+                        help="Wandb project name")
+    parser.add_argument('--wandb_entity', type=str, default=None,
+                        help="Wandb entity/team name")
+    parser.add_argument('--wandb_run_name', type=str, default=None,
+                        help="Wandb run name (if not provided, will use model_dir)")
+    parser.add_argument('--wandb_tags', nargs='+', default=None,
+                        help="Wandb tags for the run")
 
     
 
@@ -1031,6 +1117,36 @@ def main():
     else:
         model = Model(model,config,tokenizer,args)
 
+    # Initialize Wandb if requested
+    if args.use_wandb and accelerator.is_main_process:
+        # Set run name if not provided
+        if args.wandb_run_name is None:
+            args.wandb_run_name = f"{args.project}_{args.model_dir.replace('/', '_')}_epoch{args.epoch}"
+        
+        # Initialize wandb
+        wandb.init(
+            project=args.wandb_project,
+            entity=args.wandb_entity,
+            name=args.wandb_run_name,
+            tags=args.wandb_tags,
+            config={
+                "model_type": args.model_type,
+                "model_name_or_path": args.model_name_or_path,
+                "project": args.project,
+                "learning_rate": args.learning_rate,
+                "train_batch_size": args.train_batch_size,
+                "eval_batch_size": args.eval_batch_size,
+                "gradient_accumulation_steps": args.gradient_accumulation_steps,
+                "num_train_epochs": args.epoch,
+                "block_size": args.block_size,
+                "warmup_steps": args.warmup_steps,
+                "warmup_ratio": args.warmup_ratio,
+                "weight_decay": args.weight_decay,
+                "max_grad_norm": args.max_grad_norm,
+                "seed": args.seed,
+            }
+        )
+
     # Only log from main process to avoid duplicate messages
     if accelerator.is_main_process:
         logger.info("Training/evaluation parameters %s", args)
@@ -1063,6 +1179,10 @@ def main():
         model.load_state_dict(torch.load(output_dir))                  
         model.to(args.device)
         test_prob(args, model, tokenizer)
+    
+    # Finish wandb run
+    if args.use_wandb and accelerator.is_main_process:
+        wandb.finish()
     
     return results
 
