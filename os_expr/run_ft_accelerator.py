@@ -31,6 +31,7 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 import numpy as np
 import pandas as pd
 import torch
+import time
 from torch.utils.data import DataLoader, Dataset, SequentialSampler
 from torch.utils.data.distributed import DistributedSampler
 import json
@@ -60,6 +61,18 @@ import wandb
 import os
 
 logger = get_logger(__name__)
+
+def format_time_duration(seconds):
+    """Format time duration in a human-readable format"""
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    elif seconds < 3600:
+        minutes = seconds / 60
+        return f"{minutes:.1f}m ({seconds:.0f}s)"
+    else:
+        hours = seconds / 3600
+        minutes = (seconds % 3600) / 60
+        return f"{hours:.1f}h ({minutes:.0f}m)"
 
 MODEL_CLASSES = {
     'codegen': (LlamaConfig, LlamaModel, LlamaTokenizer),
@@ -204,10 +217,14 @@ def train(args, accelerator, train_dataset, eval_dataset, model, tokenizer):
     logger.info("  Gradient Accumulation steps = %d", args.gradient_accumulation_steps)
     logger.info("  Total optimization steps = %d", args.max_steps)
     
+    # Start timing the entire training
+    training_start_time = time.time()
+    
     tr_loss, logging_loss, avg_loss, tr_nb, tr_num, train_loss = 0.0, 0.0, 0.0, 0, 0, 0
     best_f1=0.0
     best_acc=0.0
     patience = 0
+    epoch_durations = []  # Store epoch durations for ETA calculation
 
     train_dataloader, eval_dataloader, model, optimizer, scheduler = accelerator.prepare(
         train_dataloader, eval_dataloader, model, optimizer, scheduler
@@ -216,6 +233,9 @@ def train(args, accelerator, train_dataset, eval_dataset, model, tokenizer):
  
     step = 0
     for idx in range(args.start_epoch, int(args.num_train_epochs)): 
+        # Start timing the epoch
+        epoch_start_time = time.time()
+        
         bar = tqdm(train_dataloader, total=len(train_dataloader), disable=not accelerator.is_local_main_process)
         tr_num = 0
         train_loss = 0
@@ -327,7 +347,34 @@ def train(args, accelerator, train_dataset, eval_dataset, model, tokenizer):
             train_roc_auc = 0.0
             train_pr_auc = 0.0
         
+        # Calculate epoch duration
+        epoch_end_time = time.time()
+        epoch_duration = epoch_end_time - epoch_start_time
+        epoch_duration_minutes = epoch_duration / 60.0
+        epoch_durations.append(epoch_duration)
+        
+        # Calculate estimated time remaining
+        if len(epoch_durations) > 0:
+            avg_epoch_duration = sum(epoch_durations) / len(epoch_durations)
+            remaining_epochs = int(args.num_train_epochs) - (idx + 1)
+            eta_seconds = avg_epoch_duration * remaining_epochs
+            eta_minutes = eta_seconds / 60.0
+            eta_hours = eta_minutes / 60.0
+        else:
+            eta_seconds = eta_minutes = eta_hours = 0
+        
         if args.local_rank in [-1, 0]:
+            # Log epoch timing with ETA
+            epoch_time_str = format_time_duration(epoch_duration)
+            if eta_hours >= 1:
+                eta_str = format_time_duration(eta_seconds)
+                logger.info(f"Epoch {idx} completed in {epoch_time_str}. ETA: {eta_str}")
+            elif remaining_epochs > 0:
+                eta_str = format_time_duration(eta_seconds)
+                logger.info(f"Epoch {idx} completed in {epoch_time_str}. ETA: {eta_str}")
+            else:
+                logger.info(f"Epoch {idx} completed in {epoch_time_str}. Final epoch!")
+            
             # Log to wandb at epoch level
             if args.use_wandb and accelerator.is_main_process:
                 wandb_log = {
@@ -343,6 +390,13 @@ def train(args, accelerator, train_dataset, eval_dataset, model, tokenizer):
                     "train/mcc": train_mcc,
                     "train/roc_auc": train_roc_auc,
                     "train/pr_auc": train_pr_auc,
+                    "epoch_duration_seconds": epoch_duration,
+                    "epoch_duration_minutes": epoch_duration_minutes,
+                    "avg_epoch_duration_seconds": avg_epoch_duration if len(epoch_durations) > 0 else epoch_duration,
+                    "eta_seconds": eta_seconds,
+                    "eta_minutes": eta_minutes,
+                    "eta_hours": eta_hours,
+                    "remaining_epochs": remaining_epochs,
                 }
                 
             if args.evaluate_during_training:  # Only evaluate when single GPU otherwise metrics may not average well
@@ -417,6 +471,28 @@ def train(args, accelerator, train_dataset, eval_dataset, model, tokenizer):
                 accelerator.save_state(output_dir)
                 logger.info("Saving model checkpoint to %s", output_dir)
             break
+    
+    # Calculate total training time
+    training_end_time = time.time()
+    total_training_time = training_end_time - training_start_time
+    total_training_minutes = total_training_time / 60.0
+    total_training_hours = total_training_minutes / 60.0
+    
+    # Log total training time
+    if accelerator.is_main_process:
+        total_time_str = format_time_duration(total_training_time)
+        logger.info(f"***** Training completed in {total_time_str} *****")
+        
+        # Log total training time to wandb
+        if args.use_wandb:
+            wandb.log({
+                "total_training_time_seconds": total_training_time,
+                "total_training_time_minutes": total_training_minutes,
+                "total_training_time_hours": total_training_hours,
+                "completed_epochs": idx + 1,
+                "avg_epoch_duration_final": sum(epoch_durations) / len(epoch_durations) if epoch_durations else 0,
+            })
+    
     # writer.close()
     if args.do_test:
         checkpoint_prefix = f'checkpoint-best-f1/{args.project}/{args.model_dir}'
