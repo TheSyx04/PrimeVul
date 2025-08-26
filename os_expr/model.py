@@ -215,6 +215,9 @@ class DecoderClassifier(nn.Module):
         attention_mask = input_ids.ne(self.tokenizer.pad_token_id)
         outputs = self.encoder(input_ids, attention_mask=attention_mask)
         hidden_states = outputs[0]
+        # Ensure classifier weights match the dtype of hidden states
+        if self.classifier.weight.dtype != hidden_states.dtype:
+            self.classifier = self.classifier.to(hidden_states.dtype)
         logits = self.classifier(hidden_states)
 
         batch_size = input_ids.size(0)
