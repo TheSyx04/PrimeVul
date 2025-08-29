@@ -1299,7 +1299,7 @@ def main():
         
         # Print original model parameters
         logger.info("Original model parameters:")
-        print_trainable_parameters(base_model)
+        print_trainable_parameters(model)
         
         # Create LoRA config
         lora_config = create_lora_config(args)
@@ -1307,9 +1307,9 @@ def main():
         # Apply LoRA
         if args.load_lora_path:
             logger.info(f"Loading pre-trained LoRA weights from {args.load_lora_path}")
-            model = PeftModel.from_pretrained(base_model, args.load_lora_path)
+            model = PeftModel.from_pretrained(model, args.load_lora_path)
         else:
-            model = get_peft_model(base_model, lora_config)
+            model = get_peft_model(model, lora_config)
         
         # Print LoRA model parameters
         logger.info("LoRA model parameters:")
@@ -1327,7 +1327,6 @@ def main():
                 "trainable_percentage": 100 * trainable_params / all_params,
             })
     else:
-        model = base_model
         logger.info("Using full fine-tuning (no LoRA)")
         print_trainable_parameters(model)
 
