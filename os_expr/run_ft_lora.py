@@ -798,7 +798,13 @@ def test(args, accelerator, model, tokenizer):
         # Load LoRA weights
         if os.path.exists(output_dir):
             logger.info(f"Loading LoRA weights from {output_dir}")
-            model = PeftModel.from_pretrained(model, output_dir)
+            # For LoRA models, we need to get the base model first
+            if hasattr(model, 'peft_config'):
+                # Model is already a PEFT model, load from checkpoint
+                model.load_adapter(output_dir, adapter_name="default", is_trainable=False)
+            else:
+                # Model is base model, apply PEFT
+                model = PeftModel.from_pretrained(model, output_dir)
         else:
             logger.warning(f"LoRA checkpoint not found at {output_dir}")
     else:
@@ -951,7 +957,7 @@ def create_lora_config(args):
         lora_dropout=args.lora_dropout,
         target_modules=target_modules,
         bias="none",  # or "all" or "lora_only"
-        modules_to_save=["classifier"] if hasattr(args, 'modules_to_save') else None,
+        modules_to_save=["classifier", "score"] if hasattr(args, 'modules_to_save') else ["classifier", "score"],
     )
     
     return lora_config
@@ -1097,7 +1103,7 @@ def main():
                         help="random seed for initialization")
     parser.add_argument("--local_rank", type=int, default=-1,
                         help="For distributed training: local_rank")
-    parser.add_argument('--max-patience', type=int, default=-1, help="Max iterations for model with no improvement.")
+    parser.add_argument('--max_patience', type=int, default=-1, help="Max iterations for model with no improvement.")
     parser.add_argument('--force_single_gpu', action='store_true',
                         help="Force single GPU mode, disable distributed training")
     
