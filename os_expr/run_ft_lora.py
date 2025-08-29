@@ -1321,20 +1321,20 @@ def main():
         logger.info("LoRA model parameters:")
         trainable_params, all_params = print_trainable_parameters(model)
         
-        # Log LoRA info to wandb
-        if args.use_wandb and accelerator.is_main_process:
-            wandb.config.update({
-                "use_lora": True,
-                "lora_r": args.lora_r,
-                "lora_alpha": args.lora_alpha,
-                "lora_dropout": args.lora_dropout,
-                "trainable_params": trainable_params,
-                "all_params": all_params,
-                "trainable_percentage": 100 * trainable_params / all_params,
-            })
+        # Store LoRA info for later wandb logging
+        lora_config = {
+            "use_lora": True,
+            "lora_r": args.lora_r,
+            "lora_alpha": args.lora_alpha,
+            "lora_dropout": args.lora_dropout,
+            "trainable_params": trainable_params,
+            "all_params": all_params,
+            "trainable_percentage": 100 * trainable_params / all_params,
+        }
     else:
         logger.info("Using full fine-tuning (no LoRA)")
         print_trainable_parameters(model)
+        lora_config = {"use_lora": False}
 
     # Initialize Wandb if requested
     if args.use_wandb and accelerator.is_main_process:
@@ -1342,28 +1342,35 @@ def main():
         if args.wandb_run_name is None:
             args.wandb_run_name = f"{args.project}_{args.model_dir.replace('/', '_')}_epoch{args.epoch}"
         
+        # Prepare wandb config
+        wandb_config = {
+            "model_type": args.model_type,
+            "model_name_or_path": args.model_name_or_path,
+            "project": args.project,
+            "learning_rate": args.learning_rate,
+            "train_batch_size": args.train_batch_size,
+            "eval_batch_size": args.eval_batch_size,
+            "gradient_accumulation_steps": args.gradient_accumulation_steps,
+            "num_train_epochs": args.epoch,
+            "block_size": args.block_size,
+            "warmup_steps": args.warmup_steps,
+            "warmup_ratio": args.warmup_ratio,
+            "weight_decay": args.weight_decay,
+            "max_grad_norm": args.max_grad_norm,
+            "seed": args.seed,
+        }
+        
+        # Add LoRA config if available
+        if 'lora_config' in locals():
+            wandb_config.update(lora_config)
+        
         # Initialize wandb
         wandb.init(
             project=args.wandb_project,
             entity=args.wandb_entity,
             name=args.wandb_run_name,
             tags=args.wandb_tags,
-            config={
-                "model_type": args.model_type,
-                "model_name_or_path": args.model_name_or_path,
-                "project": args.project,
-                "learning_rate": args.learning_rate,
-                "train_batch_size": args.train_batch_size,
-                "eval_batch_size": args.eval_batch_size,
-                "gradient_accumulation_steps": args.gradient_accumulation_steps,
-                "num_train_epochs": args.epoch,
-                "block_size": args.block_size,
-                "warmup_steps": args.warmup_steps,
-                "warmup_ratio": args.warmup_ratio,
-                "weight_decay": args.weight_decay,
-                "max_grad_norm": args.max_grad_norm,
-                "seed": args.seed,
-            }
+            config=wandb_config
         )
 
     # Only log from main process to avoid duplicate messages
