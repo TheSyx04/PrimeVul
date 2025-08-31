@@ -284,7 +284,29 @@ def train(args, accelerator, train_dataset, eval_dataset, model, tokenizer):
             model.train()
             inputs, labels = batch
             with accelerator.accumulate(model):
-                loss, logits = model(inputs, labels)
+                # Handle both cases: when model returns (loss, logits) or just logits
+                model_output = model(inputs, labels)
+                if isinstance(model_output, tuple) and len(model_output) == 2:
+                    loss, logits = model_output
+                else:
+                    # If only logits are returned, compute loss manually
+                    logits = model_output
+                    # Compute loss manually using the same approach as in the model
+                    loss_fct = torch.nn.CrossEntropyLoss()
+                    if len(logits.shape) == 3:  # if logits are [batch, seq_len, num_classes]
+                        # Pool the logits similar to DecoderClassifier
+                        batch_size = inputs.size(0)
+                        if hasattr(tokenizer, 'pad_token_id') and tokenizer.pad_token_id is not None:
+                            sequence_lengths = torch.eq(inputs, tokenizer.pad_token_id).int().argmax(-1) - 1
+                            sequence_lengths = sequence_lengths % inputs.shape[-1]
+                            sequence_lengths = sequence_lengths.to(logits.device)
+                            pooled_logits = logits[torch.arange(batch_size, device=logits.device), sequence_lengths]
+                        else:
+                            pooled_logits = logits[:, -1, :]  # Use last token
+                        loss = loss_fct(pooled_logits.view(-1, 2), labels.view(-1))
+                        logits = torch.nn.functional.softmax(pooled_logits, dim=-1)
+                    else:
+                        loss = loss_fct(logits.view(-1, 2), labels.view(-1))
 
                 accelerator.backward(loss)
                 accelerator.clip_grad_norm_(model.parameters(), args.max_grad_norm)
