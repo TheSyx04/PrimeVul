@@ -14,7 +14,6 @@ for key in ['WORLD_SIZE', 'RANK', 'LOCAL_RANK', 'MASTER_ADDR', 'MASTER_PORT']:
         del os.environ[key]
 
 os.environ["HF_ENDPOINT"] = "https://huggingface.co"
-os.environ["HF_TOKEN"] = "fb5a5b79b5aafdb17cb882dd76ac2e0cde9adf8d"
 # Set environment variable to help with flash attention compatibility
 os.environ["FLASH_ATTENTION_SKIP_CUDA_CHECK"] = "1"
 # Additional NCCL debugging and configuration
