@@ -731,7 +731,29 @@ def evaluate(args, accelerator, eval_dataloader, eval_dataset, model, tokenizer,
     for batch in eval_dataloader:
         inputs, label = batch
         with torch.no_grad():
-            lm_loss,logit = model(inputs,label)
+            # Handle both cases: when model returns (loss, logits) or just logits
+            model_output = model(inputs, label)
+            if isinstance(model_output, tuple) and len(model_output) == 2:
+                lm_loss, logit = model_output
+            else:
+                # If only logits are returned, compute loss manually
+                logit = model_output
+                # Compute loss manually using the same approach as in the model
+                loss_fct = torch.nn.CrossEntropyLoss()
+                if len(logit.shape) == 3:  # if logits are [batch, seq_len, num_classes]
+                    # Pool the logits similar to DecoderClassifier
+                    batch_size = inputs.size(0)
+                    if hasattr(tokenizer, 'pad_token_id') and tokenizer.pad_token_id is not None:
+                        sequence_lengths = torch.eq(inputs, tokenizer.pad_token_id).int().argmax(-1) - 1
+                        sequence_lengths = sequence_lengths % inputs.shape[-1]
+                        sequence_lengths = sequence_lengths.to(logit.device)
+                        pooled_logits = logit[torch.arange(batch_size, device=logit.device), sequence_lengths]
+                    else:
+                        pooled_logits = logit[:, -1, :]  # Use last token
+                    lm_loss = loss_fct(pooled_logits.view(-1, 2), label.view(-1))
+                    logit = torch.nn.functional.softmax(pooled_logits, dim=-1)
+                else:
+                    lm_loss = loss_fct(logit.view(-1, 2), label.view(-1))
         
         losses.append(accelerator.gather_for_metrics(lm_loss.repeat(args.eval_batch_size)))
         logit, label = accelerator.gather_for_metrics((logit, label))
