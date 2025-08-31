@@ -25,6 +25,9 @@ os.environ["NCCL_BLOCKING_WAIT"] = "1"
 # Set shorter timeout for quicker failure detection
 os.environ["TORCH_NCCL_ASYNC_ERROR_HANDLING"] = "1"
 
+# Set wandb token
+os.environ["WANDB_API_KEY"] = "fb5a5b79b5aafdb17cb882dd76ac2e0cde9adf8d"
+
 import math
 
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, roc_auc_score, precision_recall_curve, matthews_corrcoef, auc
