@@ -251,9 +251,13 @@ def train(args, accelerator, train_dataset, eval_dataset, model, tokenizer):
             os.makedirs(output_dir, exist_ok=True)
         
         if args.use_lora:
-            # Save LoRA weights only
+            # Save LoRA weights to lora subdirectory
+            lora_output_dir = os.path.join(output_dir, "lora")
+            if not os.path.exists(lora_output_dir):
+                os.makedirs(lora_output_dir, exist_ok=True)
+            
             unwrapped_model = accelerator.unwrap_model(model)
-            unwrapped_model.save_pretrained(output_dir)
+            unwrapped_model.save_pretrained(lora_output_dir)
             
             # Optionally merge and save full model
             if args.merge_lora and is_best:
@@ -265,11 +269,12 @@ def train(args, accelerator, train_dataset, eval_dataset, model, tokenizer):
                 merged_model = unwrapped_model.merge_and_unload()
                 merged_model.save_pretrained(merged_output_dir)
                 tokenizer.save_pretrained(merged_output_dir)
+            
+            logger.info(f"Model checkpoint saved to {lora_output_dir}")
         else:
             # Save full model using accelerator
             accelerator.save_state(output_dir)
-        
-        logger.info(f"Model checkpoint saved to {output_dir}")
+            logger.info(f"Model checkpoint saved to {output_dir}")
  
     step = 0
     for idx in range(args.start_epoch, int(args.num_train_epochs)): 
@@ -514,7 +519,7 @@ def train(args, accelerator, train_dataset, eval_dataset, model, tokenizer):
         if patience == args.max_patience:
             logger.info(f"Reached max patience {args.max_patience}. End training now.")
             if best_f1 == 0.0:
-                checkpoint_prefix = f'checkpoint-best-f1/{args.project}/{args.model_dir}'
+                checkpoint_prefix = f'checkpoint-best-f1/{args.project}/{args.model_dir}/lora'
                 output_dir = os.path.join(args.output_dir, '{}'.format(checkpoint_prefix))                        
                 save_model_checkpoint(output_dir, idx, step, is_best=False)
             break
@@ -546,8 +551,13 @@ def train(args, accelerator, train_dataset, eval_dataset, model, tokenizer):
         output_dir = os.path.join(args.output_dir, '{}'.format(checkpoint_prefix))
         
         # Load checkpoint appropriately for LoRA or full model
-        if args.use_lora and os.path.exists(os.path.join(output_dir, "adapter_config.json")):
-            # Load LoRA weights
+        lora_output_dir = os.path.join(output_dir, "lora")
+        if args.use_lora and os.path.exists(os.path.join(lora_output_dir, "adapter_config.json")):
+            # Load LoRA weights from lora subdirectory
+            logger.info(f"Loading LoRA checkpoint from {lora_output_dir}")
+            model.load_adapter(lora_output_dir, adapter_name="default", is_trainable=False)
+        elif args.use_lora and os.path.exists(os.path.join(output_dir, "adapter_config.json")):
+            # Fallback: Load LoRA weights from main directory (old format)
             logger.info(f"Loading LoRA checkpoint from {output_dir}")
             model.load_adapter(output_dir, adapter_name="default", is_trainable=False)
         else:
@@ -843,9 +853,19 @@ def test(args, accelerator, model, tokenizer):
     if args.use_lora:
         checkpoint_prefix = f'checkpoint-best-f1/{args.project}/{args.model_dir}'
         output_dir = os.path.join(args.output_dir, '{}'.format(checkpoint_prefix))
+        lora_output_dir = os.path.join(output_dir, "lora")
         
-        # Load LoRA weights
-        if os.path.exists(output_dir):
+        # Load LoRA weights from lora subdirectory first, then fallback to main directory
+        if os.path.exists(lora_output_dir):
+            logger.info(f"Loading LoRA weights from {lora_output_dir}")
+            # For LoRA models, we need to get the base model first
+            if hasattr(model, 'peft_config'):
+                # Model is already a PEFT model, load from checkpoint
+                model.load_adapter(lora_output_dir, adapter_name="default", is_trainable=False)
+            else:
+                # Model is base model, apply PEFT
+                model = PeftModel.from_pretrained(model, lora_output_dir)
+        elif os.path.exists(output_dir):
             logger.info(f"Loading LoRA weights from {output_dir}")
             # For LoRA models, we need to get the base model first
             if hasattr(model, 'peft_config'):
@@ -855,7 +875,7 @@ def test(args, accelerator, model, tokenizer):
                 # Model is base model, apply PEFT
                 model = PeftModel.from_pretrained(model, output_dir)
         else:
-            logger.warning(f"LoRA checkpoint not found at {output_dir}")
+            logger.warning(f"LoRA checkpoint not found at {output_dir} or {lora_output_dir}")
     else:
         # Load full model checkpoint
         checkpoint_prefix = f'checkpoint-best-f1/{args.project}/{args.model_dir}'
