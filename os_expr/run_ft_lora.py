@@ -570,13 +570,13 @@ def train(args, accelerator, train_dataset, eval_dataset, model, tokenizer):
 
 def calculate_metrics(labels, preds, probs=None):
     acc=accuracy_score(labels, preds)
-    prec = precision_score(labels, preds)
-    recall = recall_score(labels, preds)
-    f1 = f1_score(labels, preds)
+    prec = precision_score(labels, preds, zero_division=0)
+    recall = recall_score(labels, preds, zero_division=0)
+    f1 = f1_score(labels, preds, zero_division=0)
     TN, FP, FN, TP = confusion_matrix(labels, preds).ravel()
-    tnr = TN/(TN+FP)
-    fpr = FP/(FP+TN)
-    fnr = FN/(TP+FN)
+    tnr = TN/(TN+FP) if (TN+FP) > 0 else 0
+    fpr = FP/(FP+TN) if (FP+TN) > 0 else 0
+    fnr = FN/(TP+FN) if (TP+FN) > 0 else 0
     mcc = matthews_corrcoef(labels, preds)
     
     # Calculate AUC metrics if probabilities are provided
@@ -779,7 +779,7 @@ def evaluate(args, accelerator, eval_dataloader, eval_dataset, model, tokenizer,
         eval_roc_auc = 0.0
         eval_pr_auc = 0.0
     
-    perplexity = torch.tensor(eval_loss)
+    perplexity = eval_loss.clone().detach()
 
     result = {
         "eval_loss": float(perplexity),
