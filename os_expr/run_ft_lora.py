@@ -251,8 +251,9 @@ def train(args, accelerator, train_dataset, eval_dataset, model, tokenizer):
             os.makedirs(output_dir, exist_ok=True)
         
         if args.use_lora:
-            # Save LoRA weights
-            model.save_pretrained(output_dir)
+            # Save LoRA weights only
+            unwrapped_model = accelerator.unwrap_model(model)
+            unwrapped_model.save_pretrained(output_dir)
             
             # Optionally merge and save full model
             if args.merge_lora and is_best:
@@ -261,7 +262,7 @@ def train(args, accelerator, train_dataset, eval_dataset, model, tokenizer):
                 os.makedirs(merged_output_dir, exist_ok=True)
                 
                 # Merge LoRA weights
-                merged_model = model.merge_and_unload()
+                merged_model = unwrapped_model.merge_and_unload()
                 merged_model.save_pretrained(merged_output_dir)
                 tokenizer.save_pretrained(merged_output_dir)
         else:
@@ -472,10 +473,7 @@ def train(args, accelerator, train_dataset, eval_dataset, model, tokenizer):
             if idx == 9:
                 checkpoint_prefix = f'checkpoint-acsac/{args.project}/{args.model_dir}'
                 output_dir = os.path.join(args.output_dir, '{}'.format(checkpoint_prefix))                        
-                if not os.path.exists(output_dir):
-                    os.makedirs(output_dir, exist_ok=True)                        
-                accelerator.save_state(output_dir)
-                logger.info(f"ACSAC: Saving model checkpoint at epoch {idx} to {output_dir}")
+                save_model_checkpoint(output_dir, idx, step, is_best=False)
             
             # Save model checkpoint    
             if results['eval_f1']>best_f1:
@@ -486,10 +484,7 @@ def train(args, accelerator, train_dataset, eval_dataset, model, tokenizer):
                 
                 checkpoint_prefix = f'checkpoint-best-f1/{args.project}/{args.model_dir}'
                 output_dir = os.path.join(args.output_dir, '{}'.format(checkpoint_prefix))                        
-                if not os.path.exists(output_dir):
-                    os.makedirs(output_dir, exist_ok=True)                        
-                accelerator.save_state(output_dir)
-                logger.info(f"Saving best f1 model checkpoint at epoch {idx} to {output_dir}")
+                save_model_checkpoint(output_dir, idx, step, is_best=True)
                 patience = 0
             else:
                 patience += 1
@@ -502,10 +497,7 @@ def train(args, accelerator, train_dataset, eval_dataset, model, tokenizer):
                 
                 checkpoint_prefix = f'checkpoint-best-acc/{args.project}/{args.model_dir}'
                 output_dir = os.path.join(args.output_dir, '{}'.format(checkpoint_prefix))                        
-                if not os.path.exists(output_dir):
-                    os.makedirs(output_dir, exist_ok=True)                        
-                accelerator.save_state(output_dir)
-                logger.info(f"Saving best acc model checkpoint at epoch {idx} to {output_dir}")
+                save_model_checkpoint(output_dir, idx, step, is_best=True)
                 patience = 0
             else:
                 patience += 1
@@ -524,10 +516,7 @@ def train(args, accelerator, train_dataset, eval_dataset, model, tokenizer):
             if best_f1 == 0.0:
                 checkpoint_prefix = f'checkpoint-best-f1/{args.project}/{args.model_dir}'
                 output_dir = os.path.join(args.output_dir, '{}'.format(checkpoint_prefix))                        
-                if not os.path.exists(output_dir):
-                    os.makedirs(output_dir, exist_ok=True)                        
-                accelerator.save_state(output_dir)
-                logger.info("Saving model checkpoint to %s", output_dir)
+                save_model_checkpoint(output_dir, idx, step, is_best=False)
             break
     
     # Calculate total training time
@@ -555,7 +544,17 @@ def train(args, accelerator, train_dataset, eval_dataset, model, tokenizer):
     if args.do_test:
         checkpoint_prefix = f'checkpoint-best-f1/{args.project}/{args.model_dir}'
         output_dir = os.path.join(args.output_dir, '{}'.format(checkpoint_prefix))
-        accelerator.load_state(output_dir)
+        
+        # Load checkpoint appropriately for LoRA or full model
+        if args.use_lora and os.path.exists(os.path.join(output_dir, "adapter_config.json")):
+            # Load LoRA weights
+            logger.info(f"Loading LoRA checkpoint from {output_dir}")
+            model.load_adapter(output_dir, adapter_name="default", is_trainable=False)
+        else:
+            # Load full model checkpoint
+            logger.info(f"Loading full model checkpoint from {output_dir}")
+            accelerator.load_state(output_dir)
+            
         result = test(args, accelerator, model, tokenizer) 
         logger.info("***** Test results *****")
         for key in sorted(result.keys()):
