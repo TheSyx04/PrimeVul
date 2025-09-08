@@ -12,7 +12,7 @@ import time
 from typing import List, Dict, Optional
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from qwen_utils import QwenPrompts, extract_qwen_prediction
+from qwen_utils import get_qwen_prompts, format_qwen_messages, extract_qwen_prediction
 
 class SimpleQwenVulnerabilityDetector:
     """Simple vulnerability detector using Qwen models without complex network config."""
@@ -24,7 +24,7 @@ class SimpleQwenVulnerabilityDetector:
         self.offline = offline
         self.tokenizer = None
         self.model = None
-        self.prompts = QwenPrompts()
+        self.prompts = get_qwen_prompts()
         
         # Set basic environment variables for larger timeouts
         os.environ['HF_HUB_DOWNLOAD_TIMEOUT'] = '3600'  # 1 hour
@@ -61,20 +61,50 @@ class SimpleQwenVulnerabilityDetector:
     def predict_vulnerability(self, code: str, strategy: str = "cot", fewshot: bool = True) -> Dict:
         """Predict vulnerability for given code."""
         try:
-            # Get the appropriate prompt
+            # Build prompt manually for better control
+            prompt_parts = []
+            
+            # Add system instruction
+            prompt_parts.append(f"System: {self.prompts['system']}")
+            prompt_parts.append("")
+            
+            # Add few-shot examples if requested
+            if fewshot:
+                if strategy == "cot":
+                    # CoT few-shot examples
+                    prompt_parts.append(f"User: {self.prompts['cot_oneshot_user']}")
+                    prompt_parts.append(f"Assistant: {self.prompts['cot_oneshot_assistant']}")
+                    prompt_parts.append("")
+                    prompt_parts.append(f"User: {self.prompts['cot_twoshot_user']}")
+                    prompt_parts.append(f"Assistant: {self.prompts['cot_twoshot_assistant']}")
+                    prompt_parts.append("")
+                else:
+                    # Standard few-shot examples
+                    prompt_parts.append(f"User: {self.prompts['oneshot_user']}")
+                    prompt_parts.append(f"Assistant: {self.prompts['oneshot_assistant']}")
+                    prompt_parts.append("")
+                    prompt_parts.append(f"User: {self.prompts['twoshot_user']}")
+                    prompt_parts.append(f"Assistant: {self.prompts['twoshot_assistant']}")
+                    prompt_parts.append("")
+            
+            # Add the main prompt
             if strategy == "cot":
-                if fewshot:
-                    prompt = self.prompts.get_cot_fewshot_prompt(code)
-                else:
-                    prompt = self.prompts.get_cot_prompt(code)
+                main_prompt = self.prompts['cot'].format(func=code)
             else:
-                if fewshot:
-                    prompt = self.prompts.get_fewshot_prompt(code)
-                else:
-                    prompt = self.prompts.get_basic_prompt(code)
+                main_prompt = self.prompts['std_cls'].format(func=code)
+            
+            prompt_parts.append(f"User: {main_prompt}")
+            prompt_parts.append("Assistant: ")
+            
+            # Combine all parts
+            prompt = "\n".join(prompt_parts)
             
             # Tokenize
             inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=4096)
+            
+            # Move to device if needed
+            if hasattr(self.model, 'device'):
+                inputs = {k: v.to(self.model.device) for k, v in inputs.items()}
             
             # Generate
             with torch.no_grad():
@@ -90,11 +120,13 @@ class SimpleQwenVulnerabilityDetector:
             response = self.tokenizer.decode(outputs[0][inputs['input_ids'].shape[1]:], skip_special_tokens=True)
             
             # Extract prediction
-            prediction = extract_qwen_prediction(response)
+            prediction_str = extract_qwen_prediction(response)
+            prediction = 1 if prediction_str == "YES" else 0
             
             return {
                 "prediction": prediction,
                 "raw_response": response,
+                "prediction_str": prediction_str,
                 "prompt_strategy": strategy,
                 "fewshot": fewshot
             }
@@ -104,6 +136,7 @@ class SimpleQwenVulnerabilityDetector:
             return {
                 "prediction": 0,
                 "raw_response": f"Error: {str(e)}",
+                "prediction_str": "ERROR",
                 "prompt_strategy": strategy,
                 "fewshot": fewshot
             }
@@ -161,7 +194,7 @@ def main():
             correct += 1
         total += 1
         
-        print(f"True: {true_label}, Predicted: {predicted_label}, Correct: {is_correct}")
+        print(f"True: {true_label}, Predicted: {predicted_label} ({result.get('prediction_str', 'N/A')}), Correct: {is_correct}")
         
         # Store result
         result_entry = {
@@ -169,6 +202,7 @@ def main():
             "code": code,
             "true_label": true_label,
             "predicted_label": predicted_label,
+            "prediction_str": result.get('prediction_str', 'N/A'),
             "is_correct": is_correct,
             "raw_response": result['raw_response'],
             "prompt_strategy": result['prompt_strategy'],
