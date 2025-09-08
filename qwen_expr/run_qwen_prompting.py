@@ -24,34 +24,47 @@ class QwenVulnerabilityDetector:
         self.model_name = model_name
         self.device = device
         
-        print(f"Loading tokenizer for {model_name}...")
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            model_name,
-            trust_remote_code=True,
-            padding_side="left"
-        )
+        # Validate and potentially correct model name
+        self.model_name = self._validate_model_name(model_name)
+        
+        print(f"Loading tokenizer for {self.model_name}...")
+        try:
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.model_name,
+                trust_remote_code=True,
+                padding_side="left"
+            )
+        except Exception as e:
+            print(f"Error loading tokenizer: {e}")
+            print("Trying alternative model names...")
+            self.model_name = self._try_alternative_models()
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                self.model_name,
+                trust_remote_code=True,
+                padding_side="left"
+            )
         
         # Set pad token if it doesn't exist
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         
-        print(f"Loading model {model_name}...")
+        print(f"Loading model {self.model_name}...")
         
         # Use different settings based on model size
-        if "480B" in model_name or "72B" in model_name:
+        if "480B" in self.model_name or "72B" in self.model_name:
             # For very large models, use 8-bit quantization
             self.model = AutoModelForCausalLM.from_pretrained(
-                model_name,
+                self.model_name,
                 torch_dtype=torch.float16,
                 device_map=device,
                 trust_remote_code=True,
                 load_in_8bit=True,
                 attn_implementation="flash_attention_2" if torch.cuda.is_available() else "eager"
             )
-        elif "32B" in model_name or "14B" in model_name:
+        elif "32B" in self.model_name or "30B" in self.model_name or "14B" in self.model_name:
             # For large models, use standard loading
             self.model = AutoModelForCausalLM.from_pretrained(
-                model_name,
+                self.model_name,
                 torch_dtype=torch.float16,
                 device_map=device,
                 trust_remote_code=True,
@@ -60,7 +73,7 @@ class QwenVulnerabilityDetector:
         else:
             # For smaller models, use full precision if possible
             self.model = AutoModelForCausalLM.from_pretrained(
-                model_name,
+                self.model_name,
                 torch_dtype=torch.float16,
                 device_map=device,
                 trust_remote_code=True,
@@ -68,6 +81,44 @@ class QwenVulnerabilityDetector:
             )
         
         print("Model loaded successfully!")
+    
+    def _validate_model_name(self, model_name):
+        """Validate and correct model name if needed."""
+        # Common corrections for model names
+        corrections = {
+            "Qwen/QwenCoder-480B-A35B-Instruct": "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+            "Qwen/QwenCoder-30B-A3B-Instruct": "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+            "QwenCoder-480B-A35B-Instruct": "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+            "QwenCoder-30B-A3B-Instruct": "Qwen/Qwen3-Coder-30B-A3B-Instruct"
+        }
+        
+        if model_name in corrections:
+            corrected = corrections[model_name]
+            print(f"Correcting model name: {model_name} -> {corrected}")
+            return corrected
+        
+        return model_name
+    
+    def _try_alternative_models(self):
+        """Try alternative model names if the original fails."""
+        alternatives = [
+            "Qwen/Qwen3-Coder-30B-A3B-Instruct",
+            "Qwen/Qwen2.5-Coder-32B-Instruct", 
+            "Qwen/Qwen2.5-Coder-14B-Instruct",
+            "Qwen/Qwen2.5-Coder-7B-Instruct"
+        ]
+        
+        for alt_model in alternatives:
+            try:
+                print(f"Trying alternative model: {alt_model}")
+                # Just test tokenizer loading
+                AutoTokenizer.from_pretrained(alt_model, trust_remote_code=True)
+                print(f"Successfully found alternative model: {alt_model}")
+                return alt_model
+            except:
+                continue
+        
+        raise ValueError("No compatible Qwen models found. Please check model availability.")
     
     def format_chat_messages(self, messages):
         """
@@ -170,7 +221,7 @@ def main():
     
     # Model arguments
     parser.add_argument('--model_name', type=str, default="Qwen/Qwen2.5-Coder-32B-Instruct", 
-                       help='Qwen model name or path. For 480B model use: Qwen/QwenCoder-480B-A35B-Instruct')
+                       help='Qwen model name or path. For 480B model use: Qwen/Qwen3-Coder-480B-A35B-Instruct')
     parser.add_argument('--device', type=str, default="auto", 
                        help='Device to load model on (auto, cuda, cpu)')
     

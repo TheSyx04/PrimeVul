@@ -42,8 +42,8 @@ def run_qwen_480b(data_path, output_folder, strategy="cot", fewshot=True, temper
         temperature: Generation temperature
     """
     
-    # The actual 480B model path (adjust if different)
-    model_name = "Qwen/QwenCoder-480B-A35B-Instruct"
+    # The actual 480B model path (correct model name)
+    model_name = "Qwen/Qwen3-Coder-480B-A35B-Instruct"
     
     # Prepare command
     cmd = [

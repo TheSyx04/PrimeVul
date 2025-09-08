@@ -5,7 +5,8 @@ This directory contains scripts to run Qwen Code models for vulnerability detect
 ## Supported Models
 
 - **Qwen2.5-Coder-32B-Instruct** (default for testing)
-- **QwenCoder-480B-A35B-Instruct** (target model - requires significant GPU resources)
+- **Qwen3-Coder-480B-A35B-Instruct** (target model - requires significant GPU resources)
+- **Qwen3-Coder-30B-A3B-Instruct** (alternative large model)
 - Other Qwen2.5-Coder models (7B, 14B, 72B)
 
 ## Quick Start
@@ -33,9 +34,9 @@ python run_qwen_480b.py \
 #### Chain-of-Thought (Recommended)
 ```bash
 python run_qwen_prompting.py \
-    --model_name Qwen/QwenCoder-480B-A35B-Instruct \
+    --model_name Qwen/Qwen3-Coder-480B-A35B-Instruct \
     --prompt_strategy cot \
-    --data_path <path_to_test_data.jsonl> \
+    --data_path ../data/FFmpeg/Realistic/SETUP2-FFmpeg-deepjit-test.jsonl \
     --output_folder ./output \
     --fewshot_eg \
     --temperature 0.0 \
@@ -45,7 +46,7 @@ python run_qwen_prompting.py \
 #### Standard Classification
 ```bash
 python run_qwen_prompting.py \
-    --model_name Qwen/QwenCoder-480B-A35B-Instruct \
+    --model_name Qwen/Qwen3-Coder-480B-A35B-Instruct \
     --prompt_strategy std_cls \
     --data_path <path_to_test_data.jsonl> \
     --output_folder ./output \
@@ -85,7 +86,7 @@ Includes carefully selected examples of both vulnerable and safe code to improve
 ### For 480B Model (Requires ~200GB+ GPU Memory)
 ```bash
 python run_qwen_prompting.py \
-    --model_name Qwen/QwenCoder-480B-A35B-Instruct \
+    --model_name Qwen/Qwen3-Coder-480B-A35B-Instruct \
     --device auto \
     --max_input_length 8192 \
     --max_gen_length 2048
