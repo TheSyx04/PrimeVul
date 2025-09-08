@@ -8,79 +8,202 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 import warnings
 warnings.filterwarnings("ignore")
 
+# For better network handling
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+import huggingface_hub
+
 # Import Qwen-specific utilities
 from qwen_utils import get_qwen_prompts, format_qwen_messages, extract_qwen_prediction
 
 
 class QwenVulnerabilityDetector:
-    def __init__(self, model_name="Qwen/Qwen2.5-Coder-32B-Instruct", device="auto"):
+    def __init__(self, model_name="Qwen/Qwen2.5-Coder-32B-Instruct", device="auto", 
+                 cache_dir=None, offline=False, max_retries=3, force_download=False):
         """
         Initialize the Qwen model for vulnerability detection.
         
         Args:
             model_name: The Qwen model name/path (supports Qwen2.5-Coder series)
             device: Device to load the model on
+            cache_dir: Directory to cache models
+            offline: Use only cached models
+            max_retries: Maximum retry attempts
+            force_download: Force re-download
         """
         self.model_name = model_name
         self.device = device
+        self.cache_dir = cache_dir
+        self.offline = offline
+        self.max_retries = max_retries
+        self.force_download = force_download
+        
+        # Configure better network settings for large downloads
+        if not offline:
+            self._setup_network_config()
         
         # Validate and potentially correct model name
         self.model_name = self._validate_model_name(model_name)
         
         print(f"Loading tokenizer for {self.model_name}...")
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                self.model_name,
-                trust_remote_code=True,
-                padding_side="left"
-            )
+            self.tokenizer = self._load_tokenizer_with_retry()
         except Exception as e:
             print(f"Error loading tokenizer: {e}")
-            print("Trying alternative model names...")
-            self.model_name = self._try_alternative_models()
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                self.model_name,
-                trust_remote_code=True,
-                padding_side="left"
-            )
+            if not offline:
+                print("Trying alternative model names...")
+                self.model_name = self._try_alternative_models()
+                self.tokenizer = self._load_tokenizer_with_retry()
+            else:
+                raise e
         
         # Set pad token if it doesn't exist
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         
         print(f"Loading model {self.model_name}...")
+        print("Note: Large models may take several minutes to download and load...")
         
-        # Use different settings based on model size
-        if "480B" in self.model_name or "72B" in self.model_name:
-            # For very large models, use 8-bit quantization
-            self.model = AutoModelForCausalLM.from_pretrained(
-                self.model_name,
-                torch_dtype=torch.float16,
-                device_map=device,
-                trust_remote_code=True,
-                load_in_8bit=True,
-                attn_implementation="flash_attention_2" if torch.cuda.is_available() else "eager"
-            )
-        elif "32B" in self.model_name or "30B" in self.model_name or "14B" in self.model_name:
-            # For large models, use standard loading
-            self.model = AutoModelForCausalLM.from_pretrained(
-                self.model_name,
-                torch_dtype=torch.float16,
-                device_map=device,
-                trust_remote_code=True,
-                attn_implementation="flash_attention_2" if torch.cuda.is_available() else "eager"
-            )
-        else:
-            # For smaller models, use full precision if possible
-            self.model = AutoModelForCausalLM.from_pretrained(
-                self.model_name,
-                torch_dtype=torch.float16,
-                device_map=device,
-                trust_remote_code=True,
-                attn_implementation="flash_attention_2" if torch.cuda.is_available() else "eager"
-            )
+        # Load model with retry logic
+        self.model = self._load_model_with_retry()
         
         print("Model loaded successfully!")
+    
+    def _setup_network_config(self):
+        """Configure network settings for better handling of large downloads."""
+        # Set longer timeouts for huggingface_hub
+        os.environ['HF_HUB_DOWNLOAD_TIMEOUT'] = '3600'  # 1 hour timeout
+        
+        # Configure requests session with retry logic
+        session = requests.Session()
+        retry_strategy = Retry(
+            total=5,
+            status_forcelist=[429, 500, 502, 503, 504],
+            method_whitelist=["HEAD", "GET", "OPTIONS"],
+            backoff_factor=2
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        
+        # Monkey patch the requests session in huggingface_hub
+        huggingface_hub.file_download.requests.Session = lambda: session
+    
+    def _load_tokenizer_with_retry(self):
+        """Load tokenizer with retry logic."""
+        for attempt in range(self.max_retries):
+            try:
+                tokenizer = AutoTokenizer.from_pretrained(
+                    self.model_name,
+                    trust_remote_code=True,
+                    padding_side="left",
+                    cache_dir=self.cache_dir,
+                    local_files_only=self.offline,
+                    resume_download=not self.force_download,
+                    force_download=self.force_download
+                )
+                return tokenizer
+            except Exception as e:
+                print(f"Tokenizer loading attempt {attempt + 1} failed: {e}")
+                if attempt < self.max_retries - 1:
+                    wait_time = 2 ** attempt  # Exponential backoff
+                    print(f"Retrying in {wait_time} seconds...")
+                    time.sleep(wait_time)
+                else:
+                    raise e
+    
+    def _load_model_with_retry(self):
+        """Load model with retry logic and progressive fallback."""
+        loading_strategies = [
+            # Strategy 1: Standard loading with optimizations
+            {
+                "torch_dtype": torch.float16,
+                "device_map": self.device,
+                "trust_remote_code": True,
+                "low_cpu_mem_usage": True,
+                "load_in_8bit": "480B" in self.model_name or "72B" in self.model_name,
+                "attn_implementation": "flash_attention_2" if torch.cuda.is_available() else "eager",
+                "cache_dir": self.cache_dir,
+                "local_files_only": self.offline,
+                "resume_download": not self.force_download,
+                "force_download": self.force_download
+            },
+            # Strategy 2: Fallback without flash attention
+            {
+                "torch_dtype": torch.float16,
+                "device_map": self.device,
+                "trust_remote_code": True,
+                "low_cpu_mem_usage": True,
+                "load_in_8bit": "480B" in self.model_name or "72B" in self.model_name,
+                "cache_dir": self.cache_dir,
+                "local_files_only": self.offline,
+                "resume_download": not self.force_download
+            },
+            # Strategy 3: Basic loading
+            {
+                "torch_dtype": torch.float16,
+                "device_map": self.device,
+                "trust_remote_code": True,
+                "cache_dir": self.cache_dir,
+                "local_files_only": self.offline,
+                "resume_download": not self.force_download
+            }
+        ]
+        
+        for strategy_idx, strategy in enumerate(loading_strategies):
+            for attempt in range(self.max_retries):
+                try:
+                    print(f"Loading strategy {strategy_idx + 1}, attempt {attempt + 1}")
+                    if strategy.get("load_in_8bit"):
+                        print("Using 8-bit quantization for large model")
+                    
+                    model = AutoModelForCausalLM.from_pretrained(
+                        self.model_name,
+                        **strategy
+                    )
+                    return model
+                    
+                except Exception as e:
+                    error_msg = str(e)
+                    print(f"Loading attempt {attempt + 1} with strategy {strategy_idx + 1} failed: {error_msg}")
+                    
+                    # Handle specific error types
+                    if "timeout" in error_msg.lower() or "connection" in error_msg.lower():
+                        if attempt < self.max_retries - 1:
+                            wait_time = (2 ** attempt) * 10  # Longer waits for network issues
+                            print(f"Network issue detected. Retrying in {wait_time} seconds...")
+                            time.sleep(wait_time)
+                        continue
+                    elif "memory" in error_msg.lower() or "cuda" in error_msg.lower():
+                        print("Memory issue detected, trying next strategy...")
+                        break  # Try next strategy
+                    else:
+                        if attempt < self.max_retries - 1:
+                            wait_time = 2 ** attempt
+                            print(f"Retrying in {wait_time} seconds...")
+                            time.sleep(wait_time)
+                        continue
+        
+        # If all strategies fail, try alternative models
+        if not self.offline:
+            print("All loading strategies failed. Trying alternative models...")
+            original_model = self.model_name
+            self.model_name = self._try_alternative_models()
+            print(f"Switched from {original_model} to {self.model_name}")
+            
+            # Try loading the alternative model
+            return AutoModelForCausalLM.from_pretrained(
+                self.model_name,
+                torch_dtype=torch.float16,
+                device_map=self.device,
+                trust_remote_code=True,
+                low_cpu_mem_usage=True,
+                cache_dir=self.cache_dir,
+                resume_download=not self.force_download
+            )
+        else:
+            raise ValueError("Failed to load model in offline mode. Check cached files.")
     
     def _validate_model_name(self, model_name):
         """Validate and correct model name if needed."""
@@ -118,7 +241,7 @@ class QwenVulnerabilityDetector:
             except:
                 continue
         
-        raise ValueError("No compatible Qwen models found. Please check model availability.")
+        raise ValueError("No compatible Qwen models found. Please check model availability and network connection.")
     
     def format_chat_messages(self, messages):
         """
@@ -250,6 +373,14 @@ def main():
                        help='Random seed')
     parser.add_argument('--batch_size', type=int, default=1,
                        help='Batch size for processing (currently only supports 1)')
+    parser.add_argument('--cache_dir', type=str, default=None,
+                       help='Directory to cache downloaded models')
+    parser.add_argument('--offline', action='store_true',
+                       help='Use only locally cached models (no internet download)')
+    parser.add_argument('--max_retries', type=int, default=3,
+                       help='Maximum number of retries for model loading')
+    parser.add_argument('--force_download', action='store_true',
+                       help='Force re-download of model files')
     
     args = parser.parse_args()
     
@@ -263,7 +394,18 @@ def main():
     
     # Initialize model
     print("Initializing Qwen model...")
-    detector = QwenVulnerabilityDetector(model_name=args.model_name, device=args.device)
+    print(f"Using model: {args.model_name}")
+    print(f"Cache directory: {args.cache_dir or 'default'}")
+    print(f"Offline mode: {args.offline}")
+    print(f"Max retries: {args.max_retries}")
+    detector = QwenVulnerabilityDetector(
+        model_name=args.model_name, 
+        device=args.device,
+        cache_dir=args.cache_dir,
+        offline=args.offline,
+        max_retries=args.max_retries,
+        force_download=args.force_download
+    )
     
     # Prepare output file name
     model_name_clean = args.model_name.replace("/", "_").replace("\\", "_")

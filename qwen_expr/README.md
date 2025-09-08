@@ -21,12 +21,25 @@ pip install -r requirements.txt
 
 For the specific model you requested:
 
+#### Option A: Standard Runner
 ```bash
 python run_qwen_480b.py \
     --data_path <path_to_test_data.jsonl> \
     --output_folder ./output \
     --strategy cot \
     --temperature 0.0
+```
+
+#### Option B: Network-Robust Runner (Recommended for 480B)
+```bash
+python run_robust.py \
+    --model_name Qwen/Qwen3-Coder-480B-A35B-Instruct \
+    --data_path <path_to_test_data.jsonl> \
+    --output_folder ./output \
+    --strategy cot \
+    --fewshot \
+    --pre_download \
+    --max_retries 5
 ```
 
 ### 3. Run with Different Strategies
@@ -58,7 +71,10 @@ python run_qwen_prompting.py \
 
 - **`run_qwen_prompting.py`**: Main script for running Qwen models with various configurations
 - **`run_qwen_480b.py`**: Simplified runner specifically for the 480B model
+- **`run_robust.py`**: Network-robust runner with timeout handling and retry logic
+- **`download_manager.py`**: Utility to manage model downloads and check cache status
 - **`qwen_utils.py`**: Utility functions and enhanced prompts for Qwen models
+- **`check_models.py`**: Check model availability on Hugging Face
 - **`requirements.txt`**: Required Python packages
 
 ## Key Features
@@ -159,18 +175,46 @@ python ../calc_vd_score.py \
 
 ## Troubleshooting
 
+### Network Timeouts (480B Model)
+For the very large 480B model, network timeouts are common. Use the robust runner:
+
+```bash
+# Use the network-robust runner
+python run_robust.py \
+    --model_name Qwen/Qwen3-Coder-480B-A35B-Instruct \
+    --data_path ../data/FFmpeg/Realistic/SETUP2-FFmpeg-deepjit-test.jsonl \
+    --output_folder ./output \
+    --strategy cot \
+    --fewshot \
+    --pre_download \
+    --max_retries 5
+```
+
+### Resume Interrupted Downloads
+```bash
+# Check download status
+python download_manager.py --check Qwen/Qwen3-Coder-480B-A35B-Instruct
+
+# Resume interrupted download
+python download_manager.py --resume Qwen/Qwen3-Coder-480B-A35B-Instruct
+
+# List cached models
+python download_manager.py --list
+```
+
 ### CUDA Out of Memory
 - Reduce `max_input_length` and `max_gen_length`
-- Enable 8-bit quantization
+- Enable 8-bit quantization (automatic for 480B model)
 - Use smaller model variant
 
 ### Model Loading Issues
-- Ensure you have sufficient disk space for model download
+- Ensure you have sufficient disk space (~900GB for 480B model)
 - Check Hugging Face access permissions for gated models
 - Verify transformers version compatibility
+- Use `--offline` flag if model is already cached
 
 ### Slow Inference
-- Enable Flash Attention 2
+- Enable Flash Attention 2 (automatic when available)
 - Use appropriate batch size (currently supports batch_size=1)
 - Consider using multiple GPUs with device_map="auto"
 
