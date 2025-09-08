@@ -14,8 +14,18 @@ def show_timeout_solutions():
     print("Files were partially downloaded but the process failed.")
     print()
     
-    print("✅ SOLUTION 1: Use the Network-Robust Runner")
-    print("-" * 40)
+    print("✅ SOLUTION 1: Use the Simple Runner (No Network Config)")
+    print("-" * 50)
+    print("python run_simple_qwen.py \\")
+    print("    --model_name Qwen/Qwen3-Coder-480B-A35B-Instruct \\")
+    print("    --data_path ../data/FFmpeg/Realistic/SETUP2-FFmpeg-deepjit-test.jsonl \\")
+    print("    --output_folder ./output \\")
+    print("    --strategy cot \\")
+    print("    --fewshot")
+    print()
+    
+    print("✅ SOLUTION 2: Use the Network-Robust Runner")
+    print("-" * 45)
     print("python run_robust.py \\")
     print("    --model_name Qwen/Qwen3-Coder-480B-A35B-Instruct \\")
     print("    --data_path ../data/FFmpeg/Realistic/SETUP2-FFmpeg-deepjit-test.jsonl \\")
@@ -26,7 +36,7 @@ def show_timeout_solutions():
     print("    --max_retries 5")
     print()
     
-    print("✅ SOLUTION 2: Resume Interrupted Download")
+    print("✅ SOLUTION 3: Resume Interrupted Download")
     print("-" * 40)
     print("# First, resume the download")
     print("python download_manager.py --resume Qwen/Qwen3-Coder-480B-A35B-Instruct")
@@ -41,7 +51,7 @@ def show_timeout_solutions():
     print("    --max_retries 5")
     print()
     
-    print("✅ SOLUTION 3: Use Offline Mode (if model is cached)")
+    print("✅ SOLUTION 4: Use Offline Mode (if model is cached)")
     print("-" * 40)
     print("# Check if model is available")
     print("python download_manager.py --check Qwen/Qwen3-Coder-480B-A35B-Instruct")
@@ -56,7 +66,7 @@ def show_timeout_solutions():
     print("    --offline")
     print()
     
-    print("✅ SOLUTION 4: Use Alternative Model (for testing)")
+    print("✅ SOLUTION 5: Use Alternative Model (for testing)")
     print("-" * 40)
     print("# Use smaller but still powerful model")
     print("python run_qwen_prompting.py \\")

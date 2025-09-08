@@ -77,12 +77,22 @@ class QwenVulnerabilityDetector:
         
         # Configure requests session with retry logic
         session = requests.Session()
-        retry_strategy = Retry(
-            total=5,
-            status_forcelist=[429, 500, 502, 503, 504],
-            method_whitelist=["HEAD", "GET", "OPTIONS"],
-            backoff_factor=2
-        )
+        try:
+            # Try new parameter name first (urllib3 >= 1.26)
+            retry_strategy = Retry(
+                total=5,
+                status_forcelist=[429, 500, 502, 503, 504],
+                allowed_methods=["HEAD", "GET", "OPTIONS"],
+                backoff_factor=2
+            )
+        except TypeError:
+            # Fallback to old parameter name (urllib3 < 1.26)
+            retry_strategy = Retry(
+                total=5,
+                status_forcelist=[429, 500, 502, 503, 504],
+                method_whitelist=["HEAD", "GET", "OPTIONS"],
+                backoff_factor=2
+            )
         adapter = HTTPAdapter(max_retries=retry_strategy)
         session.mount("http://", adapter)
         session.mount("https://", adapter)
