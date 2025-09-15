@@ -15,7 +15,7 @@ class QwenModel:
         Initialize Qwen model for few-shot prompting.
         
         Args:
-            model_name: Name of the Qwen model (e.g., "Qwen/Qwen3-480B-A35B-Instruct")
+            model_name: Name of the Qwen model (e.g., "Qwen/Qwen3-Coder-480B-A35B-Instruct")
             device: Device to load the model on
             max_memory: Maximum memory allocation for model loading
         """
@@ -180,7 +180,7 @@ def construct_prompts(input_file, inst):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model', type=str, default="Qwen/Qwen3-480B-A35B-Instruct", help='Model name')
+    parser.add_argument('--model', type=str, default="Qwen/Qwen3-Coder-480B-A35B-Instruct", help='Model name')
     parser.add_argument('--prompt_strategy', type=str, choices=["std_cls", "cot"], default="std_cls", help='Prompt strategy')
     parser.add_argument('--data_path', type=str, required=True, help='Data path')
     parser.add_argument('--output_folder', type=str, required=True, help='Output folder')

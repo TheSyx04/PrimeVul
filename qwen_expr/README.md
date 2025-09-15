@@ -1,6 +1,6 @@
 # Qwen Few-Shot Prompting for Vulnerability Detection
 
-This folder contains scripts for running the Qwen/Qwen3-480B-A35B-Instruct model using few-shot prompting techniques for vulnerability detection.
+This folder contains scripts for running the Qwen/Qwen3-Coder-480B-A35B-Instruct model using few-shot prompting techniques for vulnerability detection.
 
 ## Files
 
@@ -17,7 +17,7 @@ This folder contains scripts for running the Qwen/Qwen3-480B-A35B-Instruct model
 pip install -r requirements.txt
 ```
 
-2. Make sure you have sufficient GPU memory for the Qwen/Qwen3-480B-A35B-Instruct model, or adjust the `max_memory` parameter accordingly.
+2. Make sure you have sufficient GPU memory for the Qwen/Qwen3-Coder-480B-A35B-Instruct model, or adjust the `max_memory` parameter accordingly.
 
 ## Usage
 
@@ -25,7 +25,7 @@ pip install -r requirements.txt
 
 ```bash
 python run_qwen_prompting.py \
-    --model "Qwen/Qwen3-480B-A35B-Instruct" \
+    --model "Qwen/Qwen3-Coder-480B-A35B-Instruct" \
     --prompt_strategy "std_cls" \
     --data_path "path/to/your/data.jsonl" \
     --output_folder "results/" \
@@ -37,7 +37,7 @@ python run_qwen_prompting.py \
 
 ```bash
 python run_qwen_prompting.py \
-    --model "Qwen/Qwen3-480B-A35B-Instruct" \
+    --model "Qwen/Qwen3-Coder-480B-A35B-Instruct" \
     --prompt_strategy "cot" \
     --data_path "path/to/your/data.jsonl" \
     --output_folder "results/" \
@@ -49,7 +49,7 @@ python run_qwen_prompting.py \
 
 ```bash
 python run_qwen_prompting.py \
-    --model "Qwen/Qwen3-480B-A35B-Instruct" \
+    --model "Qwen/Qwen3-Coder-480B-A35B-Instruct" \
     --prompt_strategy "std_cls" \
     --data_path "path/to/your/data.jsonl" \
     --output_folder "results/" \
@@ -58,7 +58,7 @@ python run_qwen_prompting.py \
 
 ## Arguments
 
-- `--model`: Model name (default: "Qwen/Qwen3-480B-A35B-Instruct")
+- `--model`: Model name (default: "Qwen/Qwen3-Coder-480B-A35B-Instruct")
 - `--prompt_strategy`: Prompting strategy - "std_cls" or "cot" (default: "std_cls")
 - `--data_path`: Path to input data file in JSONL format (required)
 - `--output_folder`: Output folder for results (required)
@@ -97,7 +97,7 @@ The output will be in JSONL format with the following structure:
 
 ## Memory Requirements
 
-The Qwen/Qwen3-480B-A35B-Instruct model is very large and requires significant GPU memory. For systems with limited memory:
+The Qwen/Qwen3-Coder-480B-A35B-Instruct model is very large and requires significant GPU memory. For systems with limited memory:
 
 1. Use the `--max_memory` parameter to limit memory usage per GPU
 2. Consider using model quantization techniques

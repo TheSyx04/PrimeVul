@@ -5,7 +5,7 @@
 
 # Basic usage with few-shot examples
 python run_qwen_prompting.py \
-    --model "Qwen/Qwen3-480B-A35B-Instruct" \
+    --model "Qwen/Qwen3-Coder-480B-A35B-Instruct" \
     --prompt_strategy "std_cls" \
     --data_path "path/to/your/data.jsonl" \
     --output_folder "results/" \
@@ -16,7 +16,7 @@ python run_qwen_prompting.py \
 
 # Chain of thought prompting
 # python run_qwen_prompting.py \
-#     --model "Qwen/Qwen3-480B-A35B-Instruct" \
+#     --model "Qwen/Qwen3-Coder-480B-A35B-Instruct" \
 #     --prompt_strategy "cot" \
 #     --data_path "path/to/your/data.jsonl" \
 #     --output_folder "results/" \
@@ -25,7 +25,7 @@ python run_qwen_prompting.py \
 
 # Zero-shot (no few-shot examples)
 # python run_qwen_prompting.py \
-#     --model "Qwen/Qwen3-480B-A35B-Instruct" \
+#     --model "Qwen/Qwen3-Coder-480B-A35B-Instruct" \
 #     --prompt_strategy "std_cls" \
 #     --data_path "path/to/your/data.jsonl" \
 #     --output_folder "results/" \
@@ -33,7 +33,7 @@ python run_qwen_prompting.py \
 
 # For systems with limited memory, you can specify max memory per GPU
 # python run_qwen_prompting.py \
-#     --model "Qwen/Qwen3-480B-A35B-Instruct" \
+#     --model "Qwen/Qwen3-Coder-480B-A35B-Instruct" \
 #     --prompt_strategy "std_cls" \
 #     --data_path "path/to/your/data.jsonl" \
 #     --output_folder "results/" \
