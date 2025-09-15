@@ -1,0 +1,27 @@
+# Qwen Model Configuration for Few-Shot Prompting
+
+# Model settings
+model_name: "Qwen/Qwen3-480B-A35B-Instruct"
+device: "auto"  # or specify GPU indices like "cuda:0" or "cpu"
+max_memory: null  # e.g., "20GB" per GPU
+
+# Generation settings
+temperature: 0.0
+max_gen_length: 1024
+max_context_length: 32768
+
+# Prompting settings
+prompt_strategy: "std_cls"  # options: "std_cls", "cot"
+fewshot_eg: true  # whether to use few-shot examples
+
+# Data settings
+data_path: "path/to/your/data.jsonl"
+output_folder: "results/"
+
+# Memory optimization settings
+torch_dtype: "bfloat16"  # options: "float16", "bfloat16", "float32"
+trust_remote_code: true
+
+# Advanced settings
+repetition_penalty: 1.1
+do_sample_when_temp_gt_0: true

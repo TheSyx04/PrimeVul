@@ -1,0 +1,6 @@
+torch>=2.0.0
+transformers>=4.35.0
+tqdm
+pyyaml
+accelerate
+bitsandbytes  # for quantization if needed
